@@ -33,6 +33,31 @@ from Bio.SeqRecord import SeqRecord
 from . import decoder, ledger as ledger_mod, layout as layout_mod
 
 
+# ---------- format detection ----------
+
+_FORMAT_BY_EXT = {
+    ".gb": "genbank",
+    ".gbk": "genbank",
+    ".genbank": "genbank",
+    ".dna": "snapgene",     # SnapGene proprietary (read-only via BioPython)
+    ".embl": "embl",
+}
+
+
+def detect_format(path: str | Path) -> str:
+    """Map a file extension to the BioPython SeqIO format string.
+
+    Falls back to `genbank`. The resulting record can always be written back
+    as `genbank` regardless of input format.
+    """
+    ext = Path(path).suffix.lower()
+    return _FORMAT_BY_EXT.get(ext, "genbank")
+
+
+def read_record(path: str | Path) -> SeqRecord:
+    return SeqIO.read(str(path), detect_format(path))
+
+
 # ---------- color scheme (kept in sync with the GUI legend) ----------
 
 _SEGMENT_STYLE: dict[str, dict[str, str]] = {
@@ -464,7 +489,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
 def main(argv: Optional[list[str]] = None) -> int:
     args = _build_parser().parse_args(argv)
-    record = SeqIO.read(args.input, "genbank")
+    record = read_record(args.input)
 
     if args.list_candidates:
         cands = find_candidate_sites(record, min_length=args.candidate_min_len)

@@ -518,13 +518,18 @@ class PlasmidWindow:
     def _load_file(self) -> None:
         path = filedialog.askopenfilename(
             parent=self.win,
-            filetypes=[("Genbank", "*.gb *.gbk *.genbank"), ("All files", "*.*")],
+            filetypes=[
+                ("Annotated DNA", "*.gb *.gbk *.genbank *.dna *.embl"),
+                ("Genbank", "*.gb *.gbk *.genbank"),
+                ("SnapGene", "*.dna"),
+                ("All files", "*.*"),
+            ],
         )
         if not path:
             return
         try:
-            from Bio import SeqIO
-            self.record = SeqIO.read(path, "genbank")
+            from . import insert as ins_mod
+            self.record = ins_mod.read_record(path)
         except Exception as exc:
             messagebox.showerror("STAMP", f"failed to read {path}: {exc}")
             return
