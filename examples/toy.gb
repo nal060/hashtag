@@ -1,0 +1,19 @@
+LOCUS       toy                      204 bp    DNA              UNK 01-JAN-1980
+DEFINITION  synthetic.
+ACCESSION   toy_plasmid
+VERSION     toy_plasmid
+KEYWORDS    .
+SOURCE      .
+  ORGANISM  .
+            .
+FEATURES             Location/Qualifiers
+     CDS             1..78
+                     /label="upstream_gene"
+     CDS             99..201
+                     /label="downstream_gene"
+ORIGIN
+        1 atgaaaccat gggcatgcat gcatgcatgc atgcatgcat aaaaccatgg gcatgcatgc
+       61 atgcatgcat gcatgcatgg gggggggggg ggggggggac gtagctagct agctagctag
+      121 ctagctagct agctacgtag ctagctagct agctagctag ctagctagct aaggccttaa
+      181 ccggttaacc ggttaaccgg ttaa
+//
