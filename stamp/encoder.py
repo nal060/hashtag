@@ -26,15 +26,23 @@ from . import bits as bitsmod
 # ---------- field schema ----------
 
 # Plaintext-encoded (standard mapping), Hamming-protected.
+# We split the 8-bit increment into two 4-bit halves at opposite ends of the
+# data layout. With Hamming(31,26) blocks splitting the data at bit 26,
+# placing increment_hi at the start (block 1) and increment_lo at the end
+# (block 2) means *both* codeword blocks vary across the increment search.
+# That's what lets the search escape primer-junction forbidden sites near
+# the head and tail-homopolymers near the back of the plaintext DNA.
 INCREMENT_BITS = 8
+INCREMENT_HALF_BITS = 4
 SYNTH_ID_BITS = 12
 RUN_COUNTER_BITS = 16
 SEQ_LENGTH_BITS = 16
 PLAINTEXT_FIELD_ORDER = (
-    ("increment", INCREMENT_BITS),
+    ("increment_hi", INCREMENT_HALF_BITS),
     ("synthesizer_id", SYNTH_ID_BITS),
     ("run_counter", RUN_COUNTER_BITS),
     ("sequence_length", SEQ_LENGTH_BITS),
+    ("increment_lo", INCREMENT_HALF_BITS),
 )
 PLAINTEXT_DATA_BITS = sum(w for _, w in PLAINTEXT_FIELD_ORDER)  # 52
 
@@ -222,11 +230,14 @@ class Fields:
 
 def encode_plaintext_block(fields: Fields) -> str:
     """Hamming-encode the plaintext fields and convert to DNA via standard mapping."""
+    inc_hi = (fields.increment >> INCREMENT_HALF_BITS) & ((1 << INCREMENT_HALF_BITS) - 1)
+    inc_lo = fields.increment & ((1 << INCREMENT_HALF_BITS) - 1)
     raw = _pack_field_dict(PLAINTEXT_FIELD_ORDER, {
-        "increment": fields.increment,
+        "increment_hi": inc_hi,
         "synthesizer_id": fields.synthesizer_id,
         "run_counter": fields.run_counter,
         "sequence_length": fields.sequence_length,
+        "increment_lo": inc_lo,
     })
     cw = bitsmod.hamming_encode(raw)
     cw = _scramble(_pad_to_even(cw))
@@ -234,7 +245,11 @@ def encode_plaintext_block(fields: Fields) -> str:
 
 
 def decode_plaintext_block(dna: str) -> tuple[dict[str, int], list[int]]:
-    """Return (field values, hamming syndromes per block)."""
+    """Return (field values, hamming syndromes per block).
+
+    Note: returned dict reassembles the split increment halves into a single
+    `increment` key (the wire format splits them, but callers want one value).
+    """
     expected_cw_bits = bitsmod.hamming_encoded_length(PLAINTEXT_DATA_BITS)
     expected_padded = expected_cw_bits + (expected_cw_bits % 2)
     expected_dna = expected_padded // 2
@@ -244,7 +259,9 @@ def decode_plaintext_block(dna: str) -> tuple[dict[str, int], list[int]]:
     cw_padded = _scramble(cw_scrambled)  # XOR is self-inverse
     cw = cw_padded[:expected_cw_bits]
     data, syndromes = bitsmod.hamming_decode(cw, PLAINTEXT_DATA_BITS)
-    return _unpack_field_dict(PLAINTEXT_FIELD_ORDER, data), syndromes
+    fields = _unpack_field_dict(PLAINTEXT_FIELD_ORDER, data)
+    fields["increment"] = (fields.pop("increment_hi") << INCREMENT_HALF_BITS) | fields.pop("increment_lo")
+    return fields, syndromes
 
 
 def encode_dict_protected_block(fields: Fields, dictionary: dict[int, str]) -> str:
