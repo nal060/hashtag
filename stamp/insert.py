@@ -284,19 +284,20 @@ def render_to_png(
     *,
     figure_width: int = 14,
     composite: bool = True,
+    circular: bool = False,
     barcode_label_prefix: str = "STAMP",
 ) -> Path:
     """Render `record` to a PNG using dna_features_viewer.
 
     With `composite=True` (default) the figure has two panels: the whole
-    plasmid on top and a zoom of the barcode region on the bottom — useful
-    for paper figures showing both context and barcode structure. When the
-    record contains no STAMP barcode (no feature whose label starts with
-    `barcode_label_prefix`), the zoom panel is omitted.
+    plasmid on top (linear or circular per `circular`) and a linear zoom of
+    the barcode region on the bottom — useful for paper figures showing both
+    context and barcode structure. When the record contains no STAMP barcode
+    the zoom panel is omitted.
     """
     try:
         import matplotlib.pyplot as plt
-        from dna_features_viewer import BiopythonTranslator
+        from dna_features_viewer import BiopythonTranslator, CircularGraphicRecord
     except ImportError as exc:
         raise ImportError(
             "rendering requires `dna_features_viewer` and `matplotlib` — "
@@ -313,7 +314,11 @@ def render_to_png(
             return feature.qualifiers.get("label", [feature.type])[0]
 
     translator = _StampTranslator()
-    graphic = translator.translate_record(record)
+    linear = translator.translate_record(record)
+    if circular:
+        full = translator.translate_record(record, record_class=CircularGraphicRecord)
+    else:
+        full = linear
 
     barcode_feature = next(
         (f for f in record.features
@@ -321,15 +326,21 @@ def render_to_png(
         None,
     )
 
+    title_full = f"{record.id}  ({len(record.seq)} bp)"
+    if circular:
+        title_full += "  [circular]"
+
     if composite and barcode_feature is not None:
+        # circular full plot needs more vertical room than linear
+        height = 9 if circular else 6
         fig, (ax_full, ax_zoom) = plt.subplots(
-            2, 1, figsize=(figure_width, 6),
-            gridspec_kw={"height_ratios": [1, 1.4]},
+            2, 1, figsize=(figure_width, height),
+            gridspec_kw={"height_ratios": [2, 1] if circular else [1, 1.4]},
         )
-        graphic.plot(ax=ax_full)
-        ax_full.set_title(f"{record.id}  ({len(record.seq)} bp)", fontsize=10)
-        zoom = graphic.crop((int(barcode_feature.location.start),
-                             int(barcode_feature.location.end)))
+        full.plot(ax=ax_full)
+        ax_full.set_title(title_full, fontsize=10)
+        zoom = linear.crop((int(barcode_feature.location.start),
+                            int(barcode_feature.location.end)))
         zoom.plot(ax=ax_zoom)
         ax_zoom.set_title(
             f"STAMP barcode @ {int(barcode_feature.location.start)}.."
@@ -338,9 +349,10 @@ def render_to_png(
         )
         fig.tight_layout()
     else:
-        fig, ax = plt.subplots(figsize=(figure_width, 3))
-        graphic.plot(ax=ax)
-        ax.set_title(f"{record.id}  ({len(record.seq)} bp)", fontsize=10)
+        height = figure_width if circular else 3
+        fig, ax = plt.subplots(figsize=(figure_width, height))
+        full.plot(ax=ax)
+        ax.set_title(title_full, fontsize=10)
         fig.tight_layout()
 
     output_path = Path(output_path)
@@ -444,6 +456,9 @@ def _build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--render-only", action="store_true",
                     help="with --render, only emit the zoom panel "
                          "(no full-plasmid panel)")
+    ap.add_argument("--circular", action="store_true",
+                    help="with --render, draw the full-plasmid panel as a "
+                         "circular plasmid map (Benchling/SnapGene style)")
     return ap
 
 
@@ -487,7 +502,9 @@ def main(argv: Optional[list[str]] = None) -> int:
     if args.render:
         try:
             png = render_to_png(
-                result.record, args.render, composite=not args.render_only,
+                result.record, args.render,
+                composite=not args.render_only,
+                circular=args.circular,
             )
             print(f"wrote {png}")
         except ImportError as exc:

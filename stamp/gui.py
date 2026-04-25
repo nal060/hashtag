@@ -160,6 +160,7 @@ class StampApp:
         ttk.Button(bottom, text="5. Increment-search demo", command=self._scenario5).pack(side="left", padx=2)
         ttk.Button(bottom, text="Reset ledger", command=self._reset_ledger).pack(side="right", padx=2)
         ttk.Button(bottom, text="Edit forbidden sites...", command=self._edit_blacklist).pack(side="right", padx=2)
+        ttk.Button(bottom, text="Plasmid insert...", command=self._open_plasmid_window).pack(side="right", padx=2)
 
     # ---------- helpers ----------
 
@@ -367,6 +368,9 @@ class StampApp:
             win.destroy()
         ttk.Button(win, text="Save", command=save).pack(pady=4)
 
+    def _open_plasmid_window(self) -> None:
+        PlasmidWindow(self)
+
     # ---------- scenario shortcuts ----------
 
     def _scenario1(self) -> None:
@@ -424,6 +428,249 @@ class StampApp:
             f"increment search settled at {stamped.encoding.increment} attempts. "
             f"barcode = {len(stamped.barcode)} bases.",
         )
+
+
+class PlasmidWindow:
+    """Toplevel window for inserting STAMP barcodes into annotated plasmid files.
+
+    Workflow: load a Genbank plasmid → see auto-detected candidate insertion
+    sites (homopolymer runs outside any annotated feature) → pick one or type
+    a position → stamp + insert → save the new .gb file → render an inline
+    PNG preview (composite: full plasmid + barcode zoom; circular optional).
+    """
+
+    def __init__(self, app: "StampApp") -> None:
+        self.app = app
+        self.win = tk.Toplevel(app.root)
+        self.win.title("STAMP — plasmid insert")
+        self.win.geometry("1100x780")
+
+        self.input_path: tk.StringVar = tk.StringVar(value="")
+        self.record = None  # type: ignore[assignment]
+        self.candidates: list = []
+        self.position_var: tk.IntVar = tk.IntVar(value=0)
+        self.candidate_min_len_var: tk.IntVar = tk.IntVar(value=10)
+        self.circular_var: tk.BooleanVar = tk.BooleanVar(value=True)
+        self.last_result = None  # type: ignore[assignment]
+        self._preview_image = None  # keep a reference so tk doesn't GC it
+
+        self._build_ui()
+
+    def _build_ui(self) -> None:
+        root = ttk.Frame(self.win, padding=8)
+        root.pack(fill="both", expand=True)
+
+        # ---- top: file load ----
+        top = ttk.Frame(root)
+        top.pack(fill="x")
+        ttk.Button(top, text="Load .gb...", command=self._load_file).pack(side="left")
+        ttk.Label(top, textvariable=self.input_path).pack(side="left", padx=8)
+        self.summary_var = tk.StringVar(value="(no file loaded)")
+        ttk.Label(top, textvariable=self.summary_var, foreground="#666").pack(side="left", padx=8)
+
+        # ---- middle row: candidates list + parameters ----
+        middle = ttk.Frame(root)
+        middle.pack(fill="both", expand=False, pady=8)
+
+        cand_frame = ttk.LabelFrame(middle, text="Candidate insertion sites", padding=6)
+        cand_frame.pack(side="left", fill="both", expand=True, padx=(0, 4))
+        cand_top = ttk.Frame(cand_frame)
+        cand_top.pack(fill="x")
+        ttk.Label(cand_top, text="min run length:").pack(side="left")
+        ttk.Entry(cand_top, textvariable=self.candidate_min_len_var, width=4).pack(side="left", padx=(2, 4))
+        ttk.Button(cand_top, text="Re-scan", command=self._refresh_candidates).pack(side="left")
+        self.candidate_list = tk.Listbox(cand_frame, height=8, font=("Courier New", 9))
+        self.candidate_list.pack(fill="both", expand=True, pady=(4, 0))
+        self.candidate_list.bind("<<ListboxSelect>>", self._on_candidate_selected)
+
+        params = ttk.LabelFrame(middle, text="Insert parameters", padding=6)
+        params.pack(side="left", fill="y", padx=(4, 0))
+
+        def _row(label: str, var, width: int = 8) -> None:
+            r = ttk.Frame(params); r.pack(fill="x", pady=1)
+            ttk.Label(r, text=label, width=14).pack(side="left")
+            ttk.Entry(r, textvariable=var, width=width).pack(side="left")
+
+        _row("position", self.position_var)
+        _row("synth_id", self.app.synth_id_var)
+        _row("run_counter", self.app.run_counter_var)
+        _row("machine_state", self.app.machine_state_var)
+        _row("firmware", self.app.firmware_var)
+        ttk.Checkbutton(
+            params, text="circular plasmid map", variable=self.circular_var
+        ).pack(anchor="w", pady=(4, 2))
+
+        actions = ttk.Frame(params); actions.pack(fill="x", pady=(8, 0))
+        ttk.Button(actions, text="Stamp & save .gb", command=self._stamp_and_save).pack(fill="x", pady=1)
+        ttk.Button(actions, text="Render PNG...", command=self._render_only).pack(fill="x", pady=1)
+
+        # ---- preview ----
+        preview_frame = ttk.LabelFrame(root, text="Preview", padding=4)
+        preview_frame.pack(fill="both", expand=True)
+        self.preview_label = tk.Label(preview_frame, background="#fafafa", anchor="center")
+        self.preview_label.pack(fill="both", expand=True)
+
+        self.status_var = tk.StringVar(value="")
+        ttk.Label(root, textvariable=self.status_var, foreground="#444").pack(anchor="w")
+
+    # ---------- file IO ----------
+
+    def _load_file(self) -> None:
+        path = filedialog.askopenfilename(
+            parent=self.win,
+            filetypes=[("Genbank", "*.gb *.gbk *.genbank"), ("All files", "*.*")],
+        )
+        if not path:
+            return
+        try:
+            from Bio import SeqIO
+            self.record = SeqIO.read(path, "genbank")
+        except Exception as exc:
+            messagebox.showerror("STAMP", f"failed to read {path}: {exc}")
+            return
+        self.input_path.set(path)
+        n_features = sum(1 for f in self.record.features if f.type != "source")
+        self.summary_var.set(
+            f"{self.record.id}  {len(self.record.seq)} bp  {n_features} features"
+        )
+        self._refresh_candidates()
+
+    def _refresh_candidates(self) -> None:
+        if self.record is None:
+            return
+        from . import insert as ins_mod
+        self.candidate_list.delete(0, "end")
+        self.candidates = ins_mod.find_candidate_sites(
+            self.record, min_length=int(self.candidate_min_len_var.get()),
+        )
+        if not self.candidates:
+            self.candidate_list.insert(
+                "end", "(no homopolymer runs outside features at this min length)"
+            )
+            return
+        for c in self.candidates:
+            self.candidate_list.insert(
+                "end",
+                f" pos {c.start:>6} .. {c.end:<6}  {c.length:>3}× {c.base}",
+            )
+
+    def _on_candidate_selected(self, event=None) -> None:
+        sel = self.candidate_list.curselection()
+        if not sel or not self.candidates:
+            return
+        idx = sel[0]
+        if idx < len(self.candidates):
+            c = self.candidates[idx]
+            # default to the middle of the homopolymer run
+            self.position_var.set((c.start + c.end) // 2)
+
+    # ---------- actions ----------
+
+    def _stamp_and_save(self) -> None:
+        if self.record is None:
+            messagebox.showwarning("STAMP", "load a .gb file first")
+            return
+        out_path = filedialog.asksaveasfilename(
+            parent=self.win,
+            defaultextension=".gb",
+            filetypes=[("Genbank", "*.gb"), ("All files", "*.*")],
+            initialfile=f"{self.record.id}_stamped.gb",
+        )
+        if not out_path:
+            return
+        from . import insert as ins_mod
+        from Bio import SeqIO
+        try:
+            self.status_var.set("stamping...")
+            self.win.update_idletasks()
+            result = ins_mod.stamp_and_insert(
+                record=self.record,
+                insert_at=int(self.position_var.get()),
+                synthesizer_id=int(self.app.synth_id_var.get()),
+                run_counter=int(self.app.run_counter_var.get()),
+                machine_state=self.app.machine_state_var.get(),
+                firmware_version=self.app.firmware_var.get(),
+                primer_fwd=self.app.fwd_primer,
+                primer_rev=self.app.rev_primer,
+                ledger=self.app.ledger,
+            )
+            SeqIO.write(result.record, out_path, "genbank")
+            self.last_result = result
+            # also pre-fill the main window's verify pane
+            layout = self.app.layout
+            full = str(result.record.seq).upper()
+            fwd_pos = full.find(self.app.fwd_primer)
+            if fwd_pos != -1:
+                barcode = full[fwd_pos:fwd_pos + layout.full_len]
+                self.app._set_text(self.app.verify_barcode, barcode)
+                self.app._set_text(
+                    self.app.verify_seq,
+                    full[:fwd_pos] + full[fwd_pos + layout.full_len:],
+                )
+            self.status_var.set(
+                f"wrote {out_path}  (increment={result.increment}, "
+                f"inserted at {result.insertion_position})"
+            )
+            # auto-render preview
+            self._render_preview(result.record)
+        except Exception as exc:
+            self.status_var.set("")
+            messagebox.showerror("STAMP", f"stamp failed: {exc}")
+
+    def _render_only(self) -> None:
+        """Render either the last stamp result, or the loaded record as-is."""
+        target = None
+        if self.last_result is not None:
+            target = self.last_result.record
+        elif self.record is not None:
+            target = self.record
+        if target is None:
+            messagebox.showwarning("STAMP", "load a .gb file first")
+            return
+        out_path = filedialog.asksaveasfilename(
+            parent=self.win,
+            defaultextension=".png",
+            filetypes=[("PNG", "*.png"), ("All files", "*.*")],
+            initialfile=f"{target.id}_stamped.png",
+        )
+        if not out_path:
+            return
+        try:
+            from . import insert as ins_mod
+            ins_mod.render_to_png(
+                target, out_path, circular=self.circular_var.get(),
+            )
+            self._show_preview_from_path(out_path)
+            self.status_var.set(f"wrote {out_path}")
+        except Exception as exc:
+            messagebox.showerror("STAMP", f"render failed: {exc}")
+
+    def _render_preview(self, record) -> None:
+        """Render to a temp PNG and display inline."""
+        try:
+            from . import insert as ins_mod
+            import tempfile
+            tmp = Path(tempfile.gettempdir()) / "stamp_preview.png"
+            ins_mod.render_to_png(record, tmp, circular=self.circular_var.get())
+            self._show_preview_from_path(tmp)
+        except Exception as exc:
+            self.status_var.set(f"preview render failed: {exc}")
+
+    def _show_preview_from_path(self, path) -> None:
+        try:
+            from PIL import Image, ImageTk
+        except ImportError:
+            self.preview_label.configure(
+                text="(install Pillow to see inline previews — file written to disk OK)",
+                image="",
+            )
+            return
+        img = Image.open(path)
+        # fit into the available space
+        max_w, max_h = self.preview_label.winfo_width() or 1000, self.preview_label.winfo_height() or 380
+        img.thumbnail((max(max_w, 800), max(max_h, 320)))
+        self._preview_image = ImageTk.PhotoImage(img)
+        self.preview_label.configure(image=self._preview_image, text="")
 
 
 def main() -> None:
