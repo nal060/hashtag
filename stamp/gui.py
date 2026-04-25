@@ -54,6 +54,15 @@ def _demo_primer(seed: int) -> str:
 # ---------- GUI ----------
 
 class StampApp:
+    # Background colors per barcode segment. Each entry is (tag, bg, legend_label).
+    _BARCODE_LEGEND: tuple[tuple[str, str, str], ...] = (
+        ("primer",         "#cccccc", "primer (5'/3')"),
+        ("plaintext",      "#a8e6e6", "plaintext: synth/run/inc/length"),
+        ("dict_protected", "#d9b3ff", "dict-protected: mech/chain/H_sig"),
+        ("seq_hash",       "#b3ffcc", "seq_hash"),
+        ("landmark",       "#ffe680", "landmark"),
+    )
+
     def __init__(self, root: tk.Tk) -> None:
         self.root = root
         root.title("STAMP demo")
@@ -107,8 +116,21 @@ class StampApp:
         ttk.Button(actions, text="Copy barcode", command=self._copy_barcode).pack(side="left", padx=2)
 
         ttk.Label(left, text="Barcode (output):").pack(anchor="w", pady=(8, 0))
-        self.barcode_out = scrolledtext.ScrolledText(left, height=4, wrap="char")
+        self.barcode_out = scrolledtext.ScrolledText(
+            left, height=4, wrap="char", font=("Courier New", 10),
+        )
         self.barcode_out.pack(fill="x")
+        self._configure_barcode_tags(self.barcode_out)
+
+        legend = ttk.Frame(left)
+        legend.pack(fill="x", pady=(4, 0))
+        for tag, color, label in self._BARCODE_LEGEND:
+            tk.Label(
+                legend, text="  ", bg=color, relief="solid", borderwidth=1,
+            ).pack(side="left", padx=(4, 2))
+            tk.Label(legend, text=label, font=("Helvetica", 8)).pack(
+                side="left", padx=(0, 6)
+            )
 
         # Right: verify pane
         right = ttk.LabelFrame(top, text="Verify (investigator side)", padding=8)
@@ -152,6 +174,44 @@ class StampApp:
                 if ch in "ACGT":
                     out_chars.append(ch)
         return "".join(out_chars)
+
+    def _configure_barcode_tags(self, widget: scrolledtext.ScrolledText) -> None:
+        for tag, color, _label in self._BARCODE_LEGEND:
+            widget.tag_configure(tag, background=color)
+
+    def _segment_ranges(self) -> list[tuple[int, int, str]]:
+        """[(start, end, tag), ...] for the assembled full barcode under self.layout."""
+        L = self.layout
+        ranges: list[tuple[int, int, str]] = []
+        cursor = 0
+        def add(width: int, tag: str) -> None:
+            nonlocal cursor
+            if width:
+                ranges.append((cursor, cursor + width, tag))
+                cursor += width
+        add(len(L.primer_fwd), "primer")
+        add(L.landmarks_after_fwd_primer, "landmark")
+        add(L.plaintext_len, "plaintext")
+        add(L.landmarks_between_plaintext_and_dict, "landmark")
+        add(L.dict_protected_len, "dict_protected")
+        add(L.landmarks_between_dict_and_seqhash, "landmark")
+        add(L.seq_hash_len, "seq_hash")
+        add(L.landmarks_before_rev_primer, "landmark")
+        add(len(L.primer_rev), "primer")
+        return ranges
+
+    def _render_barcode_highlighted(self, barcode: str) -> None:
+        """Insert the barcode into self.barcode_out with per-segment background tags."""
+        widget = self.barcode_out
+        widget.configure(state="normal")
+        widget.delete("1.0", "end")
+        ranges = self._segment_ranges()
+        if len(barcode) != ranges[-1][1]:
+            # Length mismatch — fall back to plain text rather than mis-tagging.
+            widget.insert("1.0", barcode)
+            return
+        for start, end, tag in ranges:
+            widget.insert("end", barcode[start:end], tag)
 
     def _set_text(self, widget: scrolledtext.ScrolledText, text: str) -> None:
         was_disabled = str(widget.cget("state")) == "disabled"
@@ -204,7 +264,7 @@ class StampApp:
         self._encoded_hits[
             (int(self.synth_id_var.get()), int(self.run_counter_var.get()))
         ] = stamped.landmark_hits
-        self._set_text(self.barcode_out, stamped.barcode)
+        self._render_barcode_highlighted(stamped.barcode)
         # Pre-populate the verify pane so a one-click round-trip works
         self._set_text(self.verify_barcode, stamped.barcode)
         self._set_text(self.verify_seq, seq)
@@ -358,7 +418,7 @@ class StampApp:
         except Exception as exc:
             messagebox.showerror("STAMP", str(exc))
             return
-        self._set_text(self.barcode_out, stamped.barcode)
+        self._render_barcode_highlighted(stamped.barcode)
         messagebox.showinfo(
             "STAMP",
             f"increment search settled at {stamped.encoding.increment} attempts. "
