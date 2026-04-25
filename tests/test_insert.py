@@ -191,6 +191,24 @@ def test_stamp_and_insert_round_trips_with_verify():
 
 # ---------- Genbank IO round-trip ----------
 
+def test_render_to_png_produces_a_file(tmp_path: Path):
+    pytest.importorskip("dna_features_viewer")
+    from stamp import gui
+    rec = _toy_plasmid()
+    result = ins.stamp_and_insert(
+        record=rec,
+        insert_at=88,
+        synthesizer_id=1,
+        run_counter=0,
+        primer_fwd=gui._demo_primer(1),
+        primer_rev=gui._demo_primer(2),
+    )
+    out = tmp_path / "stamped.png"
+    ins.render_to_png(result.record, out)
+    assert out.exists()
+    assert out.stat().st_size > 1000  # non-trivial PNG
+
+
 def test_inserted_record_writes_and_reads_back(tmp_path: Path):
     rec = _toy_plasmid()
     layout = layout_mod.BarcodeLayout(primer_fwd="A" * 20, primer_rev="C" * 20)

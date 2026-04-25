@@ -276,6 +276,79 @@ def _extend_feature(f: SeqFeature, position: int, n: int) -> SeqFeature:
     return SeqFeature(new_loc, type=f.type, qualifiers=dict(f.qualifiers))
 
 
+# ---------- rendering ----------
+
+def render_to_png(
+    record: SeqRecord,
+    output_path: str | Path,
+    *,
+    figure_width: int = 14,
+    composite: bool = True,
+    barcode_label_prefix: str = "STAMP",
+) -> Path:
+    """Render `record` to a PNG using dna_features_viewer.
+
+    With `composite=True` (default) the figure has two panels: the whole
+    plasmid on top and a zoom of the barcode region on the bottom — useful
+    for paper figures showing both context and barcode structure. When the
+    record contains no STAMP barcode (no feature whose label starts with
+    `barcode_label_prefix`), the zoom panel is omitted.
+    """
+    try:
+        import matplotlib.pyplot as plt
+        from dna_features_viewer import BiopythonTranslator
+    except ImportError as exc:
+        raise ImportError(
+            "rendering requires `dna_features_viewer` and `matplotlib` — "
+            "install with `pip install dna_features_viewer`"
+        ) from exc
+
+    class _StampTranslator(BiopythonTranslator):
+        def compute_feature_color(self, feature):
+            if "ApEinfo_fwdcolor" in feature.qualifiers:
+                return feature.qualifiers["ApEinfo_fwdcolor"][0]
+            return BiopythonTranslator.compute_feature_color(self, feature)
+
+        def compute_feature_label(self, feature):
+            return feature.qualifiers.get("label", [feature.type])[0]
+
+    translator = _StampTranslator()
+    graphic = translator.translate_record(record)
+
+    barcode_feature = next(
+        (f for f in record.features
+         if f.qualifiers.get("label", [""])[0].startswith(f"{barcode_label_prefix} barcode")),
+        None,
+    )
+
+    if composite and barcode_feature is not None:
+        fig, (ax_full, ax_zoom) = plt.subplots(
+            2, 1, figsize=(figure_width, 6),
+            gridspec_kw={"height_ratios": [1, 1.4]},
+        )
+        graphic.plot(ax=ax_full)
+        ax_full.set_title(f"{record.id}  ({len(record.seq)} bp)", fontsize=10)
+        zoom = graphic.crop((int(barcode_feature.location.start),
+                             int(barcode_feature.location.end)))
+        zoom.plot(ax=ax_zoom)
+        ax_zoom.set_title(
+            f"STAMP barcode @ {int(barcode_feature.location.start)}.."
+            f"{int(barcode_feature.location.end)}",
+            fontsize=10,
+        )
+        fig.tight_layout()
+    else:
+        fig, ax = plt.subplots(figsize=(figure_width, 3))
+        graphic.plot(ax=ax)
+        ax.set_title(f"{record.id}  ({len(record.seq)} bp)", fontsize=10)
+        fig.tight_layout()
+
+    output_path = Path(output_path)
+    fig.savefig(output_path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    return output_path
+
+
 # ---------- end-to-end stamp + insert ----------
 
 @dataclass
@@ -365,6 +438,12 @@ def _build_parser() -> argparse.ArgumentParser:
                     help="print homopolymer candidate sites and exit (no insertion)")
     ap.add_argument("--candidate-min-len", type=int, default=10,
                     help="minimum homopolymer run length when listing candidates")
+    ap.add_argument("--render", metavar="PATH.png",
+                    help="also write a PNG figure of the stamped plasmid "
+                         "(composite: full plasmid + barcode zoom)")
+    ap.add_argument("--render-only", action="store_true",
+                    help="with --render, only emit the zoom panel "
+                         "(no full-plasmid panel)")
     return ap
 
 
@@ -404,6 +483,16 @@ def main(argv: Optional[list[str]] = None) -> int:
     SeqIO.write(result.record, args.output, "genbank")
     print(f"wrote {args.output}: inserted {len(result.barcode)} bp at position "
           f"{result.insertion_position} (increment={result.increment})")
+
+    if args.render:
+        try:
+            png = render_to_png(
+                result.record, args.render, composite=not args.render_only,
+            )
+            print(f"wrote {png}")
+        except ImportError as exc:
+            print(f"render skipped: {exc}")
+            return 1
     return 0
 
 
