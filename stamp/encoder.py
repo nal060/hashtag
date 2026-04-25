@@ -418,7 +418,7 @@ def find_valid_encoding(
 
         seq_hash = compute_sequence_hash(sequence, seed)
         chain_hash = _hsm.compute_chain_hash(mech_hash, seq_hash)
-        full_signature = sign_fn(seq_hash, synthesizer_id, run_counter)
+        full_signature = sign_fn(mech_hash, seq_hash, chain_hash)
         h_sig = _hsm.h_sig(full_signature)
 
         f = Fields(

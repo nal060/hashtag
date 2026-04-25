@@ -157,12 +157,22 @@ def verify(
     mech_for_chain = expected_mech_hash if expected_mech_hash is not None else recovered_mech
     expected_chain = hsm_mock.compute_chain_hash(mech_for_chain, recovered_seq_hash)
 
-    # 8. ledger lookup → signature check
+    # 8. signature check — reconstruct the payload the HSM should have signed
+    # from the *barcode-recovered* hashes, sign it locally, and compare its
+    # truncated hash to recovered H_sig. This binds H_sig to the (mech, seq,
+    # chain) triple actually present in the barcode rather than just doing a
+    # tautological "stored-signature hashes to stored-H_sig" check.
+    expected_signature = hsm_mock.mock_hsm_sign(
+        mech_hash=recovered_mech,
+        seq_hash=recovered_seq_hash,
+        chain_hash=recovered_chain,
+    )
+    signature_valid = hsm_mock.h_sig(expected_signature) == recovered_h_sig
+
+    # Ledger lookup is now independent of the cryptographic check — it only
+    # reports whether an attestation exists on file for this (synth, run).
     ledger_entry = ledger.lookup(synthesizer_id, run_counter)
     ledger_hit = ledger_entry is not None
-    signature_valid = False
-    if ledger_hit:
-        signature_valid = hsm_mock.h_sig(ledger_entry["signature"]) == recovered_h_sig
 
     # 9. landmark forensic comparison
     cmps = lm_mod.compare_landmarks(

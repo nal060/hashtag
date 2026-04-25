@@ -9,23 +9,24 @@ from stamp import hsm_mock, ledger as ledger_mod
 
 
 def test_mock_hsm_sign_is_deterministic():
-    seq_hash = b"\xab\xcd"
-    a = hsm_mock.mock_hsm_sign(seq_hash, 1, 0)
-    b = hsm_mock.mock_hsm_sign(seq_hash, 1, 0)
+    a = hsm_mock.mock_hsm_sign(b"\xaa\xbb", b"\xab\xcd", b"\x12\x34")
+    b = hsm_mock.mock_hsm_sign(b"\xaa\xbb", b"\xab\xcd", b"\x12\x34")
     assert a == b
     assert len(a) == 32
 
 
-def test_mock_hsm_sign_changes_with_inputs():
-    sig0 = hsm_mock.mock_hsm_sign(b"\x00\x00", 1, 0)
-    sig1 = hsm_mock.mock_hsm_sign(b"\x00\x00", 1, 1)
-    sig2 = hsm_mock.mock_hsm_sign(b"\x00\x01", 1, 0)
-    sig3 = hsm_mock.mock_hsm_sign(b"\x00\x00", 2, 0)
-    assert len({sig0, sig1, sig2, sig3}) == 4
+def test_mock_hsm_sign_changes_with_each_hash():
+    """Changing any of the three signed hashes must change the signature
+    — that is the whole point of binding mech/seq/chain together."""
+    base = hsm_mock.mock_hsm_sign(b"\x00\x00", b"\x00\x00", b"\x00\x00")
+    diff_mech = hsm_mock.mock_hsm_sign(b"\x01\x00", b"\x00\x00", b"\x00\x00")
+    diff_seq = hsm_mock.mock_hsm_sign(b"\x00\x00", b"\x01\x00", b"\x00\x00")
+    diff_chain = hsm_mock.mock_hsm_sign(b"\x00\x00", b"\x00\x00", b"\x01\x00")
+    assert len({base, diff_mech, diff_seq, diff_chain}) == 4
 
 
 def test_h_sig_is_16_bit_truncation():
-    sig = hsm_mock.mock_hsm_sign(b"\x00\x00", 1, 0)
+    sig = hsm_mock.mock_hsm_sign(b"\x00\x00", b"\x00\x00", b"\x00\x00")
     h = hsm_mock.h_sig(sig)
     assert len(h) == 2
 

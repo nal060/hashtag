@@ -12,17 +12,23 @@ import random
 
 
 def mock_hsm_sign(
+    mech_hash: bytes,
     seq_hash: bytes,
-    synthesizer_id: int,
-    run_counter: int,
+    chain_hash: bytes,
     seed: int = 42,
 ) -> bytes:
-    """Return a 32-byte deterministic 'signature' over the inputs.
+    """Return a 32-byte deterministic 'signature' over (mech, seq, chain).
 
-    Spec note: signature = mock_hsm_sign(seq_hash || synthesizer_id || run_counter).
-    Fixed `seed` keeps test cases reproducible across runs.
+    The signature payload is `mech_hash || seq_hash || chain_hash`, binding all
+    three barcode hashes together so that a consistent triple-replacement at
+    the molecular level still breaks H_sig. (In real deployment this would be
+    a real PKI signature under the synthesizer's HSM private key; the mock
+    here is a deterministic public function so the demo is reproducible —
+    that's a known mock limitation, not a design flaw.)
     """
-    rng = random.Random(f"{seed}{seq_hash.hex()}{synthesizer_id}{run_counter}")
+    rng = random.Random(
+        f"{seed}|{mech_hash.hex()}|{seq_hash.hex()}|{chain_hash.hex()}"
+    )
     return bytes(rng.randint(0, 255) for _ in range(32))
 
 

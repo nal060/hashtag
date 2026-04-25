@@ -225,6 +225,78 @@ def test_verify_corrects_single_bit_sequencing_error(primers, layout, fresh_ledg
     assert result.sequence_match
 
 
+def test_verify_signature_valid_is_independent_of_ledger(primers, layout, fresh_ledger):
+    """After the H_sig binding fix, signature_valid is computed by reconstructing
+    the (mech || seq || chain) payload from the barcode itself — the ledger
+    lookup is a separate forensic axis."""
+    fwd, rev = primers
+    stamped = decoder.stamp(
+        sequence=GFP_LIKE,
+        synthesizer_id=11,
+        run_counter=0,
+        machine_state="idle",
+        firmware_version="v1.0",
+        primer_fwd=fwd,
+        primer_rev=rev,
+        ledger=fresh_ledger,
+    )
+    empty_ledger = ledger_mod.Ledger()
+    result = decoder.verify(
+        barcode_dna=stamped.barcode,
+        suspect_sequence=GFP_LIKE,
+        layout=layout,
+        ledger=empty_ledger,
+        encoded_landmark_hits=stamped.landmark_hits,
+    )
+    assert not result.ledger_hit
+    assert result.signature_valid, "signature_valid must hold even without a ledger entry"
+
+
+def test_verify_detects_tampered_seq_hash_via_signature(primers, layout, fresh_ledger):
+    """If an attacker rewrites bases in the seq_hash region (which is not
+    Hamming-protected, so a single-base change flips the recovered seq_hash),
+    the verifier reconstructs (mech || seq || chain) with the new seq, signs,
+    and gets a different H_sig — so signature_valid becomes False. The OLD
+    'stored sig hashes to stored H_sig' check would have missed this."""
+    fwd, rev = primers
+    stamped = decoder.stamp(
+        sequence=GFP_LIKE,
+        synthesizer_id=21,
+        run_counter=0,
+        machine_state="idle",
+        firmware_version="v1.0",
+        primer_fwd=fwd,
+        primer_rev=rev,
+        ledger=fresh_ledger,
+    )
+    # locate the seq_hash bases inside the body and flip a few of them
+    seq_hash_start = (
+        len(fwd)
+        + layout.landmarks_after_fwd_primer
+        + layout.plaintext_len
+        + layout.landmarks_between_plaintext_and_dict
+        + layout.dict_protected_len
+        + layout.landmarks_between_dict_and_seqhash
+    )
+    bases = list(stamped.barcode)
+    swap = {"A": "C", "C": "A", "G": "T", "T": "G"}
+    for i in range(layout.seq_hash_len):
+        bases[seq_hash_start + i] = swap[bases[seq_hash_start + i]]
+    tampered = "".join(bases)
+
+    result = decoder.verify(
+        barcode_dna=tampered,
+        suspect_sequence=GFP_LIKE,
+        layout=layout,
+        ledger=fresh_ledger,
+        encoded_landmark_hits=stamped.landmark_hits,
+    )
+    assert not result.signature_valid, (
+        "tampering with seq_hash bases must invalidate H_sig under the new "
+        "binding check"
+    )
+
+
 def test_verify_recovers_synthesizer_id_and_run_counter(primers, layout, fresh_ledger):
     fwd, rev = primers
     stamped = decoder.stamp(
