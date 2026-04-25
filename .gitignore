@@ -29,3 +29,6 @@ htmlcov/
 *.log
 ledger_state.json
 data/scratch/
+
+# Per-user Claude Code settings
+.claude/settings.local.json
