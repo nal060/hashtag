@@ -479,7 +479,7 @@ class PlasmidWindow:
         ttk.Label(cand_top, text="min run length:").pack(side="left")
         ttk.Entry(cand_top, textvariable=self.candidate_min_len_var, width=4).pack(side="left", padx=(2, 4))
         ttk.Button(cand_top, text="Re-scan", command=self._refresh_candidates).pack(side="left")
-        self.candidate_list = tk.Listbox(cand_frame, height=8, font=("Courier New", 9))
+        self.candidate_list = tk.Listbox(cand_frame, height=5, font=("Courier New", 9))
         self.candidate_list.pack(fill="both", expand=True, pady=(4, 0))
         self.candidate_list.bind("<<ListboxSelect>>", self._on_candidate_selected)
 
@@ -503,6 +503,19 @@ class PlasmidWindow:
         actions = ttk.Frame(params); actions.pack(fill="x", pady=(8, 0))
         ttk.Button(actions, text="Stamp & save .gb", command=self._stamp_and_save).pack(fill="x", pady=1)
         ttk.Button(actions, text="Render PNG...", command=self._render_only).pack(fill="x", pady=1)
+
+        # ---- input/output sequence views (barcode highlighted in output) ----
+        io_frame = ttk.LabelFrame(root, text="Sequence — input ▸ output", padding=4)
+        io_frame.pack(fill="x", pady=(0, 4))
+        self.input_seq_view = scrolledtext.ScrolledText(
+            io_frame, height=3, wrap="char", font=("Courier New", 8), state="disabled",
+        )
+        self.input_seq_view.pack(side="left", fill="x", expand=True)
+        self.output_seq_view = scrolledtext.ScrolledText(
+            io_frame, height=3, wrap="char", font=("Courier New", 8), state="disabled",
+        )
+        self.output_seq_view.pack(side="left", fill="x", expand=True, padx=(4, 0))
+        self.output_seq_view.tag_configure("barcode", background="#666666", foreground="white")
 
         # ---- preview ----
         preview_frame = ttk.LabelFrame(root, text="Preview", padding=4)
@@ -538,7 +551,20 @@ class PlasmidWindow:
         self.summary_var.set(
             f"{self.record.id}  {len(self.record.seq)} bp  {n_features} features"
         )
+        self._set_seq_view(self.input_seq_view, str(self.record.seq))
+        self._set_seq_view(self.output_seq_view, "")  # cleared until next stamp
         self._refresh_candidates()
+
+    @staticmethod
+    def _set_seq_view(widget: scrolledtext.ScrolledText, text: str,
+                      barcode_range: tuple[int, int] | None = None) -> None:
+        widget.configure(state="normal")
+        widget.delete("1.0", "end")
+        widget.insert("1.0", text)
+        if barcode_range is not None:
+            s, e = barcode_range
+            widget.tag_add("barcode", f"1.0+{s}c", f"1.0+{e}c")
+        widget.configure(state="disabled")
 
     def _refresh_candidates(self) -> None:
         if self.record is None:
@@ -613,6 +639,13 @@ class PlasmidWindow:
             self.status_var.set(
                 f"wrote {out_path}  (increment={result.increment}, "
                 f"inserted at {result.insertion_position})"
+            )
+            self._set_seq_view(
+                self.output_seq_view, str(result.record.seq),
+                barcode_range=(
+                    result.insertion_position,
+                    result.insertion_position + len(result.barcode),
+                ),
             )
             # auto-render preview
             self._render_preview(result.record)
