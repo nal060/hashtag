@@ -79,27 +79,19 @@ class CandidateSite:
     end: int         # exclusive
     base: str        # the homopolymer base
     length: int      # end - start
-    overlapping_features: tuple[str, ...]  # labels of features that overlap (empty if clean)
 
 
 def find_candidate_sites(
     record: SeqRecord,
-    min_length: int = 10,
+    min_length: int = 20,
     bases: Iterable[str] = ("G", "C", "A", "T"),
-    require_outside_features: bool = True,
 ) -> list[CandidateSite]:
-    """List homopolymer runs in the plasmid that are at least `min_length`
-    bases of one of `bases`. Sites that overlap any annotated feature are
-    excluded when `require_outside_features=True`.
-    """
+    """List homopolymer runs of length >= `min_length`, regardless of
+    whether they sit inside annotated features. The user picks the actual
+    insertion point from this list; biological judgement is theirs."""
     seq = str(record.seq).upper()
     n = len(seq)
     out: list[CandidateSite] = []
-    feature_intervals = [
-        (int(f.location.start), int(f.location.end), _label(f))
-        for f in record.features
-        if f.type != "source"
-    ]
     i = 0
     while i < n:
         b = seq[i]
@@ -111,15 +103,7 @@ def find_candidate_sites(
             j += 1
         run_len = j - i
         if run_len >= min_length:
-            overlaps = tuple(
-                lbl for s, e, lbl in feature_intervals
-                if not (e <= i or s >= j)
-            )
-            if not (require_outside_features and overlaps):
-                out.append(CandidateSite(
-                    start=i, end=j, base=b, length=run_len,
-                    overlapping_features=overlaps,
-                ))
+            out.append(CandidateSite(start=i, end=j, base=b, length=run_len))
         i = j
     return out
 
@@ -473,7 +457,7 @@ def _build_parser() -> argparse.ArgumentParser:
                     help="behavior if insertion would split a feature")
     ap.add_argument("--list-candidates", action="store_true",
                     help="print homopolymer candidate sites and exit (no insertion)")
-    ap.add_argument("--candidate-min-len", type=int, default=10,
+    ap.add_argument("--candidate-min-len", type=int, default=20,
                     help="minimum homopolymer run length when listing candidates")
     ap.add_argument("--render", metavar="PATH.png",
                     help="also write a PNG figure of the stamped plasmid "

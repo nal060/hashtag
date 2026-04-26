@@ -48,20 +48,16 @@ def test_find_candidate_sites_locates_g_run():
     assert c.start == 78
     assert c.end == 98
     assert c.length == 20
-    assert c.overlapping_features == ()
 
 
-def test_find_candidate_sites_excludes_runs_inside_features():
+def test_find_candidate_sites_does_not_filter_by_features():
+    """Runs inside annotated features are still listed — the user picks."""
     rec = _toy_plasmid()
-    # extend the upstream gene to cover the G-run
     rec.features[0] = SeqFeature(FeatureLocation(0, 200, strand=1), type="CDS",
                                   qualifiers={"label": ["whole_plasmid"]})
     cands = ins.find_candidate_sites(rec, min_length=10)
-    assert cands == []
-    # but reporting overlaps without filtering shows them
-    cands_all = ins.find_candidate_sites(rec, min_length=10, require_outside_features=False)
-    assert len(cands_all) == 1
-    assert cands_all[0].overlapping_features == ("whole_plasmid",)
+    assert len(cands) == 1
+    assert cands[0].start == 78
 
 
 def test_find_candidate_sites_respects_min_length():

@@ -449,7 +449,7 @@ class PlasmidWindow:
         self.record = None  # type: ignore[assignment]
         self.candidates: list = []
         self.position_var: tk.IntVar = tk.IntVar(value=0)
-        self.candidate_min_len_var: tk.IntVar = tk.IntVar(value=10)
+        self.candidate_min_len_var: tk.IntVar = tk.IntVar(value=20)
         self.circular_var: tk.BooleanVar = tk.BooleanVar(value=True)
         self.last_result = None  # type: ignore[assignment]
         self._preview_image = None  # keep a reference so tk doesn't GC it
@@ -550,7 +550,7 @@ class PlasmidWindow:
         )
         if not self.candidates:
             self.candidate_list.insert(
-                "end", "(no homopolymer runs outside features at this min length)"
+                "end", "(no homopolymer runs at this min length)"
             )
             return
         for c in self.candidates:
@@ -565,9 +565,7 @@ class PlasmidWindow:
             return
         idx = sel[0]
         if idx < len(self.candidates):
-            c = self.candidates[idx]
-            # default to the middle of the homopolymer run
-            self.position_var.set((c.start + c.end) // 2)
+            self.position_var.set(self.candidates[idx].start)
 
     # ---------- actions ----------
 
