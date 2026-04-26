@@ -48,9 +48,9 @@ PLAINTEXT_FIELD_ORDER = (
 PLAINTEXT_DATA_BITS = sum(w for _, w in PLAINTEXT_FIELD_ORDER)  # 52
 
 # Dictionary-encoded, Hamming-protected.
-MECH_HASH_BITS = 16
-CHAIN_HASH_BITS = 16
-H_SIG_BITS = 16
+MECH_HASH_BITS = 24
+CHAIN_HASH_BITS = 24
+H_SIG_BITS = 24
 DICT_PROTECTED_FIELD_ORDER = (
     ("mech_hash", MECH_HASH_BITS),
     ("chain_hash", CHAIN_HASH_BITS),
@@ -59,7 +59,7 @@ DICT_PROTECTED_FIELD_ORDER = (
 DICT_PROTECTED_DATA_BITS = sum(w for _, w in DICT_PROTECTED_FIELD_ORDER)  # 48
 
 # Dictionary-encoded, NOT Hamming-protected.
-SEQ_HASH_BITS = 16
+SEQ_HASH_BITS = 24
 N_LANDMARKS = 10
 LANDMARK_BITS = 2  # one base per landmark
 DICT_UNPROTECTED_FIELD_ORDER = (
@@ -312,9 +312,9 @@ def decode_dict_protected_block(dna: str, dictionary: dict[int, str]) -> tuple[d
     cw = cw_padded[:expected_cw_bits]
     data, syndromes = bitsmod.hamming_decode(cw, DICT_PROTECTED_DATA_BITS)
     return {
-        "mech_hash": bitsmod.bits_to_bytes(data[0:16]),
-        "chain_hash": bitsmod.bits_to_bytes(data[16:32]),
-        "h_sig": bitsmod.bits_to_bytes(data[32:48]),
+        "mech_hash": bitsmod.bits_to_bytes(data[0:MECH_HASH_BITS]),
+        "chain_hash": bitsmod.bits_to_bytes(data[MECH_HASH_BITS:MECH_HASH_BITS + CHAIN_HASH_BITS]),
+        "h_sig": bitsmod.bits_to_bytes(data[MECH_HASH_BITS + CHAIN_HASH_BITS:]),
     }, syndromes
 
 
@@ -371,14 +371,15 @@ def compute_sequence_hash(sequence: str, seed: bytes, sample_every: int = 50) ->
 
     Detects large rearrangements/transplants. By design misses point mutations.
     """
+    n_bytes = SEQ_HASH_BITS // 8
     if len(sequence) == 0:
-        return b"\x00\x00"
+        return b"\x00" * n_bytes
     rng = random.Random(seed)
     n_samples = max(1, len(sequence) // sample_every)
     n_samples = min(n_samples, len(sequence))
     indexes = sorted(rng.sample(range(len(sequence)), n_samples))
     sampled = "".join(sequence[i] for i in indexes)
-    return hashlib.sha256(sampled.encode()).digest()[:2]
+    return hashlib.sha256(sampled.encode()).digest()[:n_bytes]
 
 
 # ---------- nonce search ----------

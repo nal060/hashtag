@@ -102,7 +102,7 @@ def test_sequence_hash_deterministic():
     a = encoder.compute_sequence_hash(seq, seed)
     b = encoder.compute_sequence_hash(seq, seed)
     assert a == b
-    assert len(a) == 2
+    assert len(a) == encoder.SEQ_HASH_BITS // 8
 
 
 def test_sequence_hash_changes_with_sequence():
@@ -115,7 +115,7 @@ def test_sequence_hash_changes_with_sequence():
 def test_sequence_hash_short_sequence_is_handled():
     seed = encoder.derive_seed(1, 1, 0)
     h = encoder.compute_sequence_hash("AC", seed)
-    assert len(h) == 2
+    assert len(h) == encoder.SEQ_HASH_BITS // 8
 
 
 # ---------- field block round-trips ----------
@@ -126,10 +126,10 @@ def _make_fields(**overrides):
         synthesizer_id=42,
         run_counter=7,
         sequence_length=4700,
-        mech_hash=b"\xab\xcd",
-        chain_hash=b"\x12\x34",
-        h_sig=b"\xfe\xed",
-        seq_hash=b"\xde\xad",
+        mech_hash=b"\xab\xcd\xef",
+        chain_hash=b"\x12\x34\x56",
+        h_sig=b"\xfe\xed\xfa",
+        seq_hash=b"\xde\xad\xbe",
         landmarks=[0, 1, 2, 3, 0, 1, 2, 3, 0, 1],
     )
     base.update(overrides)

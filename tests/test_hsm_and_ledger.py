@@ -25,20 +25,20 @@ def test_mock_hsm_sign_changes_with_each_hash():
     assert len({base, diff_mech, diff_seq, diff_chain}) == 4
 
 
-def test_h_sig_is_16_bit_truncation():
-    sig = hsm_mock.mock_hsm_sign(b"\x00\x00", b"\x00\x00", b"\x00\x00")
+def test_h_sig_is_24_bit_truncation():
+    sig = hsm_mock.mock_hsm_sign(b"\x00\x00\x00", b"\x00\x00\x00", b"\x00\x00\x00")
     h = hsm_mock.h_sig(sig)
-    assert len(h) == 2
+    assert len(h) == hsm_mock._HASH_BYTES == 3
 
 
 def test_mech_and_chain_hashes():
     mech = hsm_mock.compute_mech_hash("idle", "v1.2.3")
-    seq = b"\xde\xad"
+    seq = b"\xde\xad\xbe"
     chain = hsm_mock.compute_chain_hash(mech, seq)
-    assert len(mech) == 2
-    assert len(chain) == 2
+    assert len(mech) == hsm_mock._HASH_BYTES == 3
+    assert len(chain) == hsm_mock._HASH_BYTES == 3
     # changing either input changes the chain
-    chain2 = hsm_mock.compute_chain_hash(mech, b"\xbe\xef")
+    chain2 = hsm_mock.compute_chain_hash(mech, b"\xbe\xef\xca")
     assert chain != chain2
 
 

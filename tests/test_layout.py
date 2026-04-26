@@ -42,9 +42,9 @@ def test_layout_lengths_are_consistent():
     fwd = _primer(20, 100); rev = _primer(20, 101)
     layout = layout_mod.BarcodeLayout(primer_fwd=fwd, primer_rev=rev)
     assert layout.plaintext_len == 31
-    assert layout.dict_protected_len == 31
-    assert layout.seq_hash_len == 8
-    assert layout.body_len == 31 + 31 + 8 + 10  # plaintext + dict + seqhash + 10 landmarks
+    assert layout.dict_protected_len == 47   # 72 data bits → 3 Hamming(31,26) blocks → 94 bits
+    assert layout.seq_hash_len == 12          # 24 bits / 2 bits per base
+    assert layout.body_len == layout.plaintext_len + layout.dict_protected_len + layout.seq_hash_len + 10
     assert layout.full_len == layout.body_len + 40
 
 
