@@ -52,7 +52,11 @@ class VerifyResult:
     signature_valid: bool       # H_sig in barcode == SHA256(ledger.signature)[:2]
     sequence_match: bool        # seq_hash in barcode == compute_sequence_hash(suspect, seed)
     chain_valid: bool           # chain_hash in barcode == H(mech_hash || seq_hash)
-    sequence_length_match: bool
+    sequence_length_match: bool                  # declared (barcode) == actual (suspect)
+    # declared (barcode) == ledger sequence_length. None when the ledger
+    # entry is missing or pre-dates this field — backwards compat.
+    ledger_length_match: Optional[bool] = None
+    ledger_sequence_length: Optional[int] = None
 
     # forensic
     landmarks: list[LandmarkVerdict] = field(default_factory=list)
@@ -71,6 +75,7 @@ class VerifyResult:
             and self.sequence_match
             and self.chain_valid
             and self.sequence_length_match
+            and self.ledger_length_match is not False  # None (skipped) or True both ok
             and all(l.feature_matches for l in self.landmarks)
         )
 
@@ -92,6 +97,10 @@ class VerifyResult:
         if not self.sequence_length_match:
             notes.append(f"length mismatch (declared {self.declared_sequence_length}, "
                          f"actual {self.actual_sequence_length})")
+        if self.ledger_length_match is False:
+            notes.append(f"plaintext length tampered (barcode declares "
+                         f"{self.declared_sequence_length}, ledger has "
+                         f"{self.ledger_sequence_length})")
         if n_landmark_mismatches:
             notes.append(f"{n_landmark_mismatches}/{len(self.landmarks)} landmark features mismatch")
         if (
@@ -187,6 +196,11 @@ def verify(
             )
             for h in ledger_entry["landmark_hits"]
         ]
+    ledger_sequence_length = ledger_entry.get("sequence_length") if ledger_entry else None
+    ledger_length_match = (
+        declared_length == ledger_sequence_length
+        if ledger_sequence_length is not None else None
+    )
     cmps = lm_mod.compare_landmarks(
         stored_features=stored_features,
         sequence=suspect_sequence,
@@ -220,6 +234,8 @@ def verify(
         sequence_match=(recovered_seq_hash == expected_seq_hash),
         chain_valid=(recovered_chain == expected_chain),
         sequence_length_match=(declared_length == len(suspect_sequence)),
+        ledger_length_match=ledger_length_match,
+        ledger_sequence_length=ledger_sequence_length,
         landmarks=landmark_verdicts,
         recovered_seq_hash=recovered_seq_hash,
         expected_seq_hash=expected_seq_hash,
@@ -276,5 +292,6 @@ def stamp(
         timestamp=timestamp,
         seq_hash=enc.fields.seq_hash,
         landmark_hits=hits,
+        sequence_length=enc.fields.sequence_length,
     )
     return StampResult(barcode=barcode, encoding=enc, landmark_hits=hits)

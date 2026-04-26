@@ -31,11 +31,13 @@ class Ledger:
         timestamp: int,
         seq_hash: bytes,
         landmark_hits: Optional[Iterable] = None,
+        sequence_length: Optional[int] = None,
     ) -> None:
         """Post an attestation. `landmark_hits` is an optional iterable of
         objects with `slot/site/position/upstream/feature` attributes (e.g.
         landmarks.LandmarkHit); they are serialized as plain dicts so the
-        ledger stays free of any landmarks dependency.
+        ledger stays free of any landmarks dependency. `sequence_length`
+        records the construct length at synthesis time (pre-barcode-insert).
         """
         entry: dict = {
             "signature": signature.hex(),
@@ -48,6 +50,8 @@ class Ledger:
                  "upstream": h.upstream, "feature": h.feature}
                 for h in landmark_hits
             ]
+        if sequence_length is not None:
+            entry["sequence_length"] = sequence_length
         self._entries[self._key(synthesizer_id, run_counter)] = entry
         self._flush()
 
@@ -62,6 +66,8 @@ class Ledger:
         }
         if "landmark_hits" in entry:
             out["landmark_hits"] = entry["landmark_hits"]
+        if "sequence_length" in entry:
+            out["sequence_length"] = entry["sequence_length"]
         return out
 
     def _flush(self) -> None:

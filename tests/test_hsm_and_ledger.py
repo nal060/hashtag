@@ -97,3 +97,11 @@ def test_ledger_lookup_omits_landmark_hits_for_old_entries(tmp_path: Path):
     entry = L.lookup(5, 1)
     assert entry is not None
     assert "landmark_hits" not in entry
+    assert "sequence_length" not in entry
+
+
+def test_ledger_round_trips_sequence_length():
+    L = ledger_mod.Ledger()
+    L.post(2, 0, b"\x00" * 32, 0, b"\x00\x00", sequence_length=4731)
+    entry = L.lookup(2, 0)
+    assert entry["sequence_length"] == 4731
