@@ -14,8 +14,7 @@ Algorithm summary:
   cluster on plasmids that happen to carry one.
 - For each landmark, scan the construct for the highest-priority site that
   is present; tiebreak alphabetically by downstream sequence.
-- Read the 2 upstream bases of the chosen site; the first of those 2 bases
-  (2 bits) is the landmark feature.
+- The base immediately 5' of the chosen site (2 bits) is the landmark feature.
 """
 
 from __future__ import annotations
@@ -90,8 +89,8 @@ class LandmarkHit:
     slot: int
     site: Optional[str]       # canonical 6-mer matched, or None if all priorities exhausted
     position: Optional[int]   # position in the sequence
-    upstream: Optional[str]   # 2 bases immediately upstream of `position`
-    feature: Optional[int]    # 2-bit value derived from upstream[0] (the stored landmark)
+    upstream: Optional[str]   # the base immediately 5' of `position`
+    feature: Optional[int]    # 2-bit value of `upstream` (the stored landmark)
 
 
 def _find_all_occurrences(sequence: str, site: str) -> list[int]:
@@ -117,12 +116,12 @@ def find_landmark(sequence: str, priority_list: list[str], slot: int) -> Landmar
       2. For each candidate site, find all occurrences (forward + reverse complement).
       3. If any occurrences: pick one. Multiple hits → tiebreak alphabetically
          by the 10 bases immediately downstream of the site.
-      4. Read 2 bases immediately upstream of the chosen position.
-      5. Return the first of those 2 bases (2 bits) as the feature.
+      4. Take the base immediately 5' of the chosen position (2 bits) as the
+         landmark feature.
 
-    If the chosen position is too close to the 5' end (< 2 bases upstream) we
-    advance to the next candidate. If the entire priority list is exhausted,
-    returns a LandmarkHit with site=None and feature=None.
+    If the chosen position is at the 5' end (no upstream base) we advance to
+    the next candidate. If the entire priority list is exhausted, returns a
+    LandmarkHit with site=None and feature=None.
     """
     seq_upper = sequence.upper()
     for site in priority_list:
@@ -136,18 +135,17 @@ def find_landmark(sequence: str, priority_list: list[str], slot: int) -> Landmar
                 positions,
                 key=lambda p: seq_upper[p + 6:p + 16] if p + 16 <= len(seq_upper) else seq_upper[p + 6:],
             )
-        if chosen < 2:
-            # too close to the 5' end to read 2 upstream bases
-            continue
-        upstream = seq_upper[chosen - 2:chosen]
-        if upstream[0] not in _BASE_TO_INT:
-            continue  # upstream contains N or another non-canonical character
+        if chosen < 1:
+            continue  # no upstream base available
+        upstream = seq_upper[chosen - 1]
+        if upstream not in _BASE_TO_INT:
+            continue  # upstream is N or another non-canonical character
         return LandmarkHit(
             slot=slot,
             site=site,
             position=chosen,
             upstream=upstream,
-            feature=_BASE_TO_INT[upstream[0]],
+            feature=_BASE_TO_INT[upstream],
         )
     return LandmarkHit(slot=slot, site=None, position=None, upstream=None, feature=None)
 
