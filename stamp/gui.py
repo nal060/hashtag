@@ -331,13 +331,15 @@ class StampApp:
             "",
             "Landmark forensic pattern:",
         ]
+        def _f(v, default="—"):
+            return str(v) if v is not None else default
         for lv in result.landmarks:
             mark = "OK" if lv.feature_matches else "X"
-            site = lv.found_site or "(none)"
-            pos = lv.found_position if lv.found_position is not None else "—"
             lines.append(
-                f"  [{mark}] slot {lv.slot}: stored={lv.stored_feature}  "
-                f"site={site} pos={pos}  site_matches_stored={lv.site_matches_stored}"
+                f"  [{mark}] slot {lv.slot}  "
+                f"orig: {_f(lv.stored_site, '(none)')} @{_f(lv.stored_position)} base={_f(lv.stored_upstream)}  |  "
+                f"new: {_f(lv.found_site, '(none)')} @{_f(lv.found_position)} base={_f(lv.found_upstream)}  |  "
+                f"site_match={lv.site_matches_stored}"
             )
         self._set_text(self.verify_out, "\n".join(lines))
 

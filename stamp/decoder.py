@@ -26,6 +26,10 @@ class LandmarkVerdict:
     feature_matches: bool
     found_site: Optional[str]
     found_position: Optional[int]
+    found_upstream: Optional[str] = None  # base immediately 5' of found_site in the suspect sequence
+    stored_site: Optional[str] = None      # site the encoder anchored to (from encoded_landmark_hits)
+    stored_position: Optional[int] = None  # its position in the original sequence
+    stored_upstream: Optional[str] = None  # base immediately 5' at encode time
 
 
 @dataclass
@@ -206,8 +210,12 @@ def verify(
         sequence=suspect_sequence,
         encoded_hits=encoded_landmark_hits,
     )
-    landmark_verdicts = [
-        LandmarkVerdict(
+    landmark_verdicts = []
+    for c in cmps:
+        enc = (encoded_landmark_hits[c.slot]
+               if encoded_landmark_hits and c.slot < len(encoded_landmark_hits)
+               else None)
+        landmark_verdicts.append(LandmarkVerdict(
             slot=c.slot,
             stored_feature=c.stored_feature,
             site_present=c.site_present,
@@ -215,9 +223,11 @@ def verify(
             feature_matches=c.feature_matches,
             found_site=c.found_hit.site,
             found_position=c.found_hit.position,
-        )
-        for c in cmps
-    ]
+            found_upstream=c.found_hit.upstream,
+            stored_site=enc.site if enc else None,
+            stored_position=enc.position if enc else None,
+            stored_upstream=(enc.upstream if enc else "ACGT"[c.stored_feature]),
+        ))
 
     return VerifyResult(
         increment=increment,
