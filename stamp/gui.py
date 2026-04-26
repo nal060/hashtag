@@ -132,6 +132,13 @@ class StampApp:
                 side="left", padx=(0, 6)
             )
 
+        # auxiliary mapping: slot @ position → original upstream base
+        self.landmark_info_var = tk.StringVar(value="")
+        tk.Label(
+            left, textvariable=self.landmark_info_var, foreground="#666",
+            font=("Courier New", 8), anchor="w", justify="left",
+        ).pack(fill="x", pady=(2, 0))
+
         # Right: verify pane
         right = ttk.LabelFrame(top, text="Verify (investigator side)", padding=8)
         right.pack(side="left", fill="both", expand=True, padx=(4, 0))
@@ -201,8 +208,11 @@ class StampApp:
         add(len(L.primer_rev), "primer")
         return ranges
 
-    def _render_barcode_highlighted(self, barcode: str) -> None:
-        """Insert the barcode into self.barcode_out with per-segment background tags."""
+    def _render_barcode_highlighted(self, barcode: str, landmark_hits=None) -> None:
+        """Insert the barcode into self.barcode_out with per-segment background tags.
+        If `landmark_hits` is provided (the encoder-side LandmarkHit list),
+        also populate the auxiliary `slot @ position → orig base` mapping line.
+        """
         widget = self.barcode_out
         widget.configure(state="normal")
         widget.delete("1.0", "end")
@@ -213,6 +223,16 @@ class StampApp:
             return
         for start, end, tag in ranges:
             widget.insert("end", barcode[start:end], tag)
+        if landmark_hits is None:
+            self.landmark_info_var.set("")
+            return
+        positions = [p for s, e, t in ranges if t == "landmark" for p in range(s, e)]
+        parts = [
+            f"{slot}@{pos}→{landmark_hits[slot].upstream or '·'}"
+            for slot, pos in enumerate(positions)
+            if slot < len(landmark_hits)
+        ]
+        self.landmark_info_var.set("landmarks: " + "  ".join(parts))
 
     def _set_text(self, widget: scrolledtext.ScrolledText, text: str) -> None:
         was_disabled = str(widget.cget("state")) == "disabled"
@@ -265,7 +285,7 @@ class StampApp:
         self._encoded_hits[
             (int(self.synth_id_var.get()), int(self.run_counter_var.get()))
         ] = stamped.landmark_hits
-        self._render_barcode_highlighted(stamped.barcode)
+        self._render_barcode_highlighted(stamped.barcode, stamped.landmark_hits)
         # Pre-populate the verify pane so a one-click round-trip works
         self._set_text(self.verify_barcode, stamped.barcode)
         self._set_text(self.verify_seq, seq)
@@ -424,7 +444,7 @@ class StampApp:
         except Exception as exc:
             messagebox.showerror("STAMP", str(exc))
             return
-        self._render_barcode_highlighted(stamped.barcode)
+        self._render_barcode_highlighted(stamped.barcode, stamped.landmark_hits)
         messagebox.showinfo(
             "STAMP",
             f"increment search settled at {stamped.encoding.increment} attempts. "
