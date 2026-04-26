@@ -76,7 +76,7 @@ DICT_UNPROTECTED_DATA_BITS = sum(w for _, w in DICT_UNPROTECTED_FIELD_ORDER)  # 
 # are filtered to strict-consensus ACGT (no IUPAC ambiguity) and length
 # >= _MIN_SITE_LEN to keep the blacklist tractable for the increment search.
 _FORBIDDEN_ENZYMES = CommOnly
-_MIN_SITE_LEN = 7
+_MIN_SITE_LEN = 6
 
 FORBIDDEN_SITES: list[str] = sorted({
     e.site.upper() for e in _FORBIDDEN_ENZYMES
@@ -145,12 +145,18 @@ def invert_dictionary(d: dict[int, str]) -> dict[str, int]:
 _SCRAMBLE_KEY = b"STAMP-codeword-scramble-v2"
 
 
-def _scramble_pattern(length: int) -> list[int]:
-    """SHA-256-derived bit stream of `length` bits."""
+def _scramble_pattern(length: int, key_extra: bytes = b"") -> list[int]:
+    """SHA-256-derived bit stream of `length` bits, optionally re-keyed.
+
+    `key_extra` lets callers tag a per-block-or-per-attempt suffix (e.g. the
+    increment value) so the same data scrambled under different suffixes
+    yields different DNA — the only way the increment search can perturb
+    the plaintext block when its data bits are mostly input-fixed.
+    """
     out: list[int] = []
     counter = 0
     while len(out) < length:
-        chunk = hashlib.sha256(_SCRAMBLE_KEY + counter.to_bytes(4, "big")).digest()
+        chunk = hashlib.sha256(_SCRAMBLE_KEY + key_extra + counter.to_bytes(4, "big")).digest()
         for byte in chunk:
             for shift in range(7, -1, -1):
                 out.append((byte >> shift) & 1)
@@ -160,9 +166,13 @@ def _scramble_pattern(length: int) -> list[int]:
     return out
 
 
-def _scramble(bit_list: list[int]) -> list[int]:
-    pat = _scramble_pattern(len(bit_list))
+def _scramble(bit_list: list[int], key_extra: bytes = b"") -> list[int]:
+    pat = _scramble_pattern(len(bit_list), key_extra)
     return [b ^ p for b, p in zip(bit_list, pat)]
+
+
+def _plaintext_scramble_key(increment: int) -> bytes:
+    return b"plaintext|" + increment.to_bytes(2, "big")
 
 
 # ---------- bits <-> DNA ----------
@@ -223,7 +233,13 @@ class Fields:
 
 
 def encode_plaintext_block(fields: Fields) -> str:
-    """Hamming-encode the plaintext fields and convert to DNA via standard mapping."""
+    """Hamming-encode the plaintext fields and convert to DNA via standard mapping.
+
+    The scramble pad is keyed by `fields.increment` so different attempts in
+    the increment search produce structurally different plaintext DNA — this
+    is what lets the search escape forbidden-site collisions caused by
+    input-fixed bits (synth_id / run_counter / sequence_length).
+    """
     inc_hi = (fields.increment >> INCREMENT_HALF_BITS) & ((1 << INCREMENT_HALF_BITS) - 1)
     inc_lo = fields.increment & ((1 << INCREMENT_HALF_BITS) - 1)
     raw = _pack_field_dict(PLAINTEXT_FIELD_ORDER, {
@@ -234,15 +250,17 @@ def encode_plaintext_block(fields: Fields) -> str:
         "increment_lo": inc_lo,
     })
     cw = bitsmod.hamming_encode(raw)
-    cw = _scramble(_pad_to_even(cw))
+    cw = _scramble(_pad_to_even(cw), _plaintext_scramble_key(fields.increment))
     return bits_to_dna(cw, standard_dictionary())
 
 
 def decode_plaintext_block(dna: str) -> tuple[dict[str, int], list[int]]:
-    """Return (field values, hamming syndromes per block).
+    """Decode the plaintext block by trying every candidate increment.
 
-    Note: returned dict reassembles the split increment halves into a single
-    `increment` key (the wire format splits them, but callers want one value).
+    The scramble pad depends on the increment, but the increment is itself
+    inside the scrambled block. We resolve the chicken-and-egg by testing
+    all 2**INCREMENT_BITS candidates and picking the one that decodes to
+    itself, breaking ties by lowest total Hamming syndrome.
     """
     expected_cw_bits = bitsmod.hamming_encoded_length(PLAINTEXT_DATA_BITS)
     expected_padded = expected_cw_bits + (expected_cw_bits % 2)
@@ -250,12 +268,26 @@ def decode_plaintext_block(dna: str) -> tuple[dict[str, int], list[int]]:
     if len(dna) != expected_dna:
         raise ValueError(f"plaintext block must be {expected_dna} bases, got {len(dna)}")
     cw_scrambled = dna_to_bits(dna, standard_dictionary())
-    cw_padded = _scramble(cw_scrambled)  # XOR is self-inverse
-    cw = cw_padded[:expected_cw_bits]
-    data, syndromes = bitsmod.hamming_decode(cw, PLAINTEXT_DATA_BITS)
-    fields = _unpack_field_dict(PLAINTEXT_FIELD_ORDER, data)
-    fields["increment"] = (fields.pop("increment_hi") << INCREMENT_HALF_BITS) | fields.pop("increment_lo")
-    return fields, syndromes
+
+    best: tuple[int, dict[str, int], list[int]] | None = None  # (syndrome_score, fields, syndromes)
+    for candidate in range(1 << INCREMENT_BITS):
+        cw_padded = _scramble(cw_scrambled, _plaintext_scramble_key(candidate))
+        cw = cw_padded[:expected_cw_bits]
+        data, syndromes = bitsmod.hamming_decode(cw, PLAINTEXT_DATA_BITS)
+        fields = _unpack_field_dict(PLAINTEXT_FIELD_ORDER, data)
+        decoded_inc = (fields["increment_hi"] << INCREMENT_HALF_BITS) | fields["increment_lo"]
+        if decoded_inc != candidate:
+            continue
+        score = sum(1 if s else 0 for s in syndromes)
+        if best is None or score < best[0]:
+            fields = {k: v for k, v in fields.items() if k not in ("increment_hi", "increment_lo")}
+            fields["increment"] = decoded_inc
+            best = (score, fields, syndromes)
+            if score == 0:
+                break  # clean decode — no need to keep searching
+    if best is None:
+        raise ValueError("no self-consistent plaintext decode (no candidate increment matched)")
+    return best[1], best[2]
 
 
 def encode_dict_protected_block(fields: Fields, dictionary: dict[int, str]) -> str:
