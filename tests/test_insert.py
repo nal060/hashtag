@@ -138,6 +138,26 @@ def test_insert_rejects_out_of_range_position():
 
 # ---------- end-to-end stamp_and_insert + verify ----------
 
+def test_stamp_and_insert_annotates_landmark_anchors():
+    """Each found landmark slot should produce two new features in the output:
+    a 6-bp `anchor` over the recognition site and a 1-bp `feature` over the
+    immediately-5' base. Slots without a hit are silently skipped."""
+    from stamp import gui
+    rec = _toy_plasmid()
+    result = ins.stamp_and_insert(
+        record=rec, insert_at=88, synthesizer_id=1, run_counter=0,
+        primer_fwd=gui._demo_primer(1), primer_rev=gui._demo_primer(2),
+    )
+    labels = [f.qualifiers.get("label", [""])[0] for f in result.record.features]
+    n_anchor = sum(1 for l in labels if "STAMP-LM" in l and "anchor" in l)
+    n_feature = sum(1 for l in labels if "STAMP-LM" in l and "feature" in l)
+    assert n_anchor >= 1
+    assert n_feature >= 1
+    # Each anchor should have a matching feature for the same slot
+    # (modulo the hit.position == 0 edge case which skips the feature).
+    assert n_feature <= n_anchor
+
+
 def test_stamp_and_insert_round_trips_with_verify():
     """Full demo flow: insert a real STAMP barcode into the plasmid,
     extract the barcode region back out, and confirm verify accepts it

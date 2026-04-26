@@ -69,6 +69,8 @@ _SEGMENT_STYLE: dict[str, dict[str, str]] = {
 }
 
 _WRAPPER_STYLE = {"color": "#666666", "label": "STAMP barcode", "type": "misc_feature"}
+_LANDMARK_ANCHOR_COLOR = "#cc7722"   # 6-mer recognition site in the original sequence
+_LANDMARK_FEATURE_COLOR = "#ff5500"  # 1-bp immediately-5' base actually stored
 
 
 # ---------- candidate site finder ----------
@@ -165,6 +167,39 @@ def annotate_barcode_segments(layout: layout_mod.BarcodeLayout) -> list[SeqFeatu
         },
     )
     return [wrapper] + features
+
+
+def annotate_landmark_anchors(landmark_hits: Iterable) -> list[SeqFeature]:
+    """For each found landmark hit, emit two SeqFeatures in the *original*
+    sequence's coordinate system: a 6-bp annotation over the recognition
+    site, and a 1-bp annotation over the immediately-5' base that's stored
+    as the landmark's feature value. Slots with no hit are skipped."""
+    features: list[SeqFeature] = []
+    for h in landmark_hits:
+        if h.site is None or h.position is None:
+            continue
+        features.append(SeqFeature(
+            FeatureLocation(h.position, h.position + len(h.site), strand=1),
+            type="misc_feature",
+            qualifiers={
+                "label": [f"STAMP-LM{h.slot} anchor ({h.site})"],
+                "note": [f"STAMP landmark {h.slot} 6-mer recognition site"],
+                "ApEinfo_fwdcolor": [_LANDMARK_ANCHOR_COLOR],
+                "ApEinfo_revcolor": [_LANDMARK_ANCHOR_COLOR],
+            },
+        ))
+        if h.position >= 1 and h.upstream:
+            features.append(SeqFeature(
+                FeatureLocation(h.position - 1, h.position, strand=1),
+                type="misc_feature",
+                qualifiers={
+                    "label": [f"STAMP-LM{h.slot} feature ({h.upstream})"],
+                    "note": [f"STAMP landmark {h.slot} stored 5'-immediate base"],
+                    "ApEinfo_fwdcolor": [_LANDMARK_FEATURE_COLOR],
+                    "ApEinfo_revcolor": [_LANDMARK_FEATURE_COLOR],
+                },
+            ))
+    return features
 
 
 def _segment_feature(start: int, end: int, tag: str, label_override: str) -> SeqFeature:
@@ -423,9 +458,19 @@ def stamp_and_insert(
 
     layout = layout_mod.BarcodeLayout(primer_fwd=primer_fwd, primer_rev=primer_rev)
     barcode_features = annotate_barcode_segments(layout)
+    anchor_features = annotate_landmark_anchors(stamped.landmark_hits)
+
+    # Mix the anchor features into a shallow-copied record so the existing
+    # downstream-shift logic in insert_barcode handles them correctly.
+    record_with_anchors = SeqRecord(
+        seq=record.seq,
+        id=record.id, name=record.name, description=record.description,
+        annotations=dict(record.annotations),
+        features=list(record.features) + anchor_features,
+    )
 
     new_record = insert_barcode(
-        record=record,
+        record=record_with_anchors,
         position=insert_at,
         barcode=stamped.barcode,
         barcode_features=barcode_features,
