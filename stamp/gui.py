@@ -453,6 +453,8 @@ class PlasmidWindow:
         self.circular_var: tk.BooleanVar = tk.BooleanVar(value=True)
         self.last_result = None  # type: ignore[assignment]
         self._preview_image = None  # keep a reference so tk doesn't GC it
+        self._preview_path: str | None = None  # last rendered PNG, for resize re-render
+        self._resize_after_id: str | None = None
 
         self._build_ui()
 
@@ -468,12 +470,17 @@ class PlasmidWindow:
         self.summary_var = tk.StringVar(value="(no file loaded)")
         ttk.Label(top, textvariable=self.summary_var, foreground="#666").pack(side="left", padx=8)
 
-        # ---- middle row: candidates list + parameters ----
-        middle = ttk.Frame(root)
-        middle.pack(fill="both", expand=False, pady=8)
+        # ---- main resizable area: vertical splitter holds middle row, sequence
+        # views, and preview. Drag the dividers to redistribute vertical space.
+        vpw = ttk.PanedWindow(root, orient="vertical")
+        vpw.pack(fill="both", expand=True, pady=(8, 0))
+
+        # ---- middle row: horizontal splitter between candidates and parameters
+        middle = ttk.PanedWindow(vpw, orient="horizontal")
+        vpw.add(middle, weight=1)
 
         cand_frame = ttk.LabelFrame(middle, text="Candidate insertion sites", padding=6)
-        cand_frame.pack(side="left", fill="both", expand=True, padx=(0, 4))
+        middle.add(cand_frame, weight=2)
         cand_top = ttk.Frame(cand_frame)
         cand_top.pack(fill="x")
         ttk.Label(cand_top, text="min run length:").pack(side="left")
@@ -484,7 +491,7 @@ class PlasmidWindow:
         self.candidate_list.bind("<<ListboxSelect>>", self._on_candidate_selected)
 
         params = ttk.LabelFrame(middle, text="Insert parameters", padding=6)
-        params.pack(side="left", fill="y", padx=(4, 0))
+        middle.add(params, weight=1)
 
         def _row(label: str, var, width: int = 8) -> None:
             r = ttk.Frame(params); r.pack(fill="x", pady=1)
@@ -505,23 +512,24 @@ class PlasmidWindow:
         ttk.Button(actions, text="Render PNG...", command=self._render_only).pack(fill="x", pady=1)
 
         # ---- input/output sequence views (barcode highlighted in output) ----
-        io_frame = ttk.LabelFrame(root, text="Sequence — input ▸ output", padding=4)
-        io_frame.pack(fill="x", pady=(0, 4))
+        io_frame = ttk.LabelFrame(vpw, text="Sequence — input ▸ output", padding=4)
+        vpw.add(io_frame, weight=1)
         self.input_seq_view = scrolledtext.ScrolledText(
             io_frame, height=3, wrap="char", font=("Courier New", 8), state="disabled",
         )
-        self.input_seq_view.pack(side="left", fill="x", expand=True)
+        self.input_seq_view.pack(side="left", fill="both", expand=True)
         self.output_seq_view = scrolledtext.ScrolledText(
             io_frame, height=3, wrap="char", font=("Courier New", 8), state="disabled",
         )
-        self.output_seq_view.pack(side="left", fill="x", expand=True, padx=(4, 0))
+        self.output_seq_view.pack(side="left", fill="both", expand=True, padx=(4, 0))
         self.output_seq_view.tag_configure("barcode", background="#666666", foreground="white")
 
         # ---- preview ----
-        preview_frame = ttk.LabelFrame(root, text="Preview", padding=4)
-        preview_frame.pack(fill="both", expand=True)
+        preview_frame = ttk.LabelFrame(vpw, text="Preview", padding=4)
+        vpw.add(preview_frame, weight=3)
         self.preview_label = tk.Label(preview_frame, background="#fafafa", anchor="center")
         self.preview_label.pack(fill="both", expand=True)
+        self.preview_label.bind("<Configure>", self._on_preview_resize)
 
         self.status_var = tk.StringVar(value="")
         ttk.Label(root, textvariable=self.status_var, foreground="#444").pack(anchor="w")
@@ -701,12 +709,32 @@ class PlasmidWindow:
                 image="",
             )
             return
+        self._preview_path = path
         img = Image.open(path)
-        # fit into the available space
-        max_w, max_h = self.preview_label.winfo_width() or 1000, self.preview_label.winfo_height() or 380
-        img.thumbnail((max(max_w, 800), max(max_h, 320)))
+        # rescale to fill the current label size, preserving aspect ratio.
+        # `resize` (unlike `thumbnail`) lets us up-scale too, so dragging the
+        # preview pane bigger actually enlarges the image.
+        w = self.preview_label.winfo_width() or 1000
+        h = self.preview_label.winfo_height() or 380
+        iw, ih = img.size
+        scale = min(w / iw, h / ih)
+        if scale > 0:
+            img = img.resize(
+                (max(int(iw * scale), 1), max(int(ih * scale), 1)),
+                Image.LANCZOS,
+            )
         self._preview_image = ImageTk.PhotoImage(img)
         self.preview_label.configure(image=self._preview_image, text="")
+
+    def _on_preview_resize(self, event=None) -> None:
+        """Debounced re-render so the image scales with the preview pane."""
+        if not getattr(self, "_preview_path", None):
+            return
+        if self._resize_after_id is not None:
+            self.win.after_cancel(self._resize_after_id)
+        self._resize_after_id = self.win.after(
+            100, lambda: self._show_preview_from_path(self._preview_path),
+        )
 
 
 def main() -> None:
