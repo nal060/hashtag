@@ -70,3 +70,38 @@ def test_ledger_persists_to_disk(tmp_path: Path):
     assert entry["signature"] == b"\xaa" * 32
     # verify the file is well-formed json
     assert "1:0" in json.loads(path.read_text())
+
+
+def test_ledger_round_trips_landmark_hits():
+    from stamp.landmarks import LandmarkHit
+    hits = [
+        LandmarkHit(slot=0, site="GAATTC", position=42, upstream="C", feature=1),
+        LandmarkHit(slot=1, site=None, position=None, upstream=None, feature=None),
+    ]
+    L = ledger_mod.Ledger()
+    L.post(1, 0, b"\xaa" * 32, 0, b"\x00\x00", landmark_hits=hits)
+    entry = L.lookup(1, 0)
+    assert entry["landmark_hits"] == [
+        {"slot": 0, "site": "GAATTC", "position": 42, "upstream": "C", "feature": 1},
+        {"slot": 1, "site": None, "position": None, "upstream": None, "feature": None},
+    ]
+
+
+def test_ledger_lookup_omits_landmark_hits_for_old_entries(tmp_path: Path):
+    """A JSON ledger file written before the landmark_hits field existed must
+    still load without error; lookup returns an entry with no landmark_hits."""
+    path = tmp_path / "old_ledger.json"
+    legacy = {"5:1": {"signature": "00" * 32, "timestamp": 0, "seq_hash": "1234"}}
+    path.write_text(json.dumps(legacy))
+    L = ledger_mod.Ledger(path)
+    entry = L.lookup(5, 1)
+    assert entry is not None
+    assert "landmark_hits" not in entry
+    assert "sequence_length" not in entry
+
+
+def test_ledger_round_trips_sequence_length():
+    L = ledger_mod.Ledger()
+    L.post(2, 0, b"\x00" * 32, 0, b"\x00\x00", sequence_length=4731)
+    entry = L.lookup(2, 0)
+    assert entry["sequence_length"] == 4731

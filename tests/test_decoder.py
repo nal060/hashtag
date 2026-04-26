@@ -140,6 +140,89 @@ def test_scenario3_transplant_flags_length_and_landmarks(primers, layout, fresh_
     assert not result.sequence_length_match  # length disagreement
 
 
+def test_verify_detects_plaintext_length_tamper_via_ledger(primers, layout, fresh_ledger):
+    """Attacker rewrites the plaintext block to declare a fake length matching
+    a tampered suspect sequence. sequence_length_match passes (declared==actual)
+    so the basic length check is fooled, but the ledger still has the original
+    length, so ledger_length_match=False catches it."""
+    fwd, rev = primers
+    stamped = decoder.stamp(
+        sequence=GFP_LIKE,
+        synthesizer_id=51,
+        run_counter=0,
+        machine_state="idle",
+        firmware_version="v1.0",
+        primer_fwd=fwd,
+        primer_rev=rev,
+        ledger=fresh_ledger,
+    )
+    # Forge a plaintext block that declares a fake length, keeping the
+    # original increment, synth_id, run_counter so the rest of the barcode
+    # decodes self-consistently.
+    fake_length = 9999
+    forged_fields = encoder.Fields(
+        increment=stamped.encoding.fields.increment,
+        synthesizer_id=stamped.encoding.fields.synthesizer_id,
+        run_counter=stamped.encoding.fields.run_counter,
+        sequence_length=fake_length,
+        mech_hash=stamped.encoding.fields.mech_hash,
+        chain_hash=stamped.encoding.fields.chain_hash,
+        h_sig=stamped.encoding.fields.h_sig,
+        seq_hash=stamped.encoding.fields.seq_hash,
+        landmarks=stamped.encoding.fields.landmarks,
+    )
+    fake_pt = encoder.encode_plaintext_block(forged_fields)
+    pt_start = len(fwd) + layout.landmarks_after_fwd_primer
+    pt_end = pt_start + layout.plaintext_len
+    forged = stamped.barcode[:pt_start] + fake_pt + stamped.barcode[pt_end:]
+    suspect = "A" * fake_length
+    result = decoder.verify(forged, suspect, layout=layout, ledger=fresh_ledger)
+    assert result.declared_sequence_length == fake_length
+    assert result.sequence_length_match is True       # basic check is fooled
+    assert result.ledger_sequence_length == len(GFP_LIKE)
+    assert result.ledger_length_match is False        # but ledger reveals the lie
+    assert "plaintext length tampered" in result.summarize()
+
+
+def test_scenario3_transplant_uses_ledger_landmark_hits_for_site_forensics(
+    primers, layout, fresh_ledger,
+):
+    """Same transplant attack, but verify is called WITHOUT
+    `encoded_landmark_hits` — the realistic deployment path. The verifier
+    pulls the encoder-side hits from the ledger entry that was posted at
+    stamp time, so site_matches_stored is populated and we get site-level
+    forensics rather than the 2-bit-feature-only fallback."""
+    fwd, rev = primers
+    stamped = decoder.stamp(
+        sequence=GFP_LIKE,
+        synthesizer_id=33,
+        run_counter=0,
+        machine_state="idle",
+        firmware_version="v1.0",
+        primer_fwd=fwd,
+        primer_rev=rev,
+        ledger=fresh_ledger,
+    )
+    result = decoder.verify(
+        barcode_dna=stamped.barcode,
+        suspect_sequence=MCHERRY_LIKE,
+        layout=layout,
+        ledger=fresh_ledger,
+        # NOTE: no encoded_landmark_hits — must come from the ledger
+    )
+    assert result.signature_valid
+    assert not result.sequence_match
+    # site-level comparison was actually performed: at least one slot anchored
+    # to a different site in the suspect sequence than at encode time, AND we
+    # can tell because site_matches_stored is False (not None / unevaluated).
+    site_decisions = [lv.site_matches_stored for lv in result.landmarks]
+    assert any(d is False for d in site_decisions), (
+        "expected at least one slot where the stored site differs from the "
+        "suspect-sequence site (transplant signature); got "
+        f"{site_decisions}"
+    )
+
+
 # ---------- scenario 4: barcode absent ----------
 
 def test_scenario4_no_ledger_entry_flags_absence(primers, layout, fresh_ledger):

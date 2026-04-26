@@ -39,14 +39,14 @@ def test_priority_lists_deterministic():
 
 def test_find_landmark_returns_first_priority_when_present():
     # build a sequence that contains EcoRI site (GAATTC) at position 10
-    upstream = "ACGTACGTAC"  # 10 bases ending in 'C' (the byte before GAATTC)
+    upstream = "ACGTACGTAC"  # the base immediately 5' of GAATTC is 'C'
     seq = upstream + "GAATTC" + "ACGTACGT" * 5
     piles = landmarks.generate_priority_lists()
     hit = landmarks.find_landmark(seq, piles[0], slot=0)
     assert hit.site == "GAATTC"  # already canonical
     assert hit.position == 10
-    assert hit.upstream == "AC"
-    assert hit.feature == landmarks._BASE_TO_INT["A"]
+    assert hit.upstream == "C"
+    assert hit.feature == landmarks._BASE_TO_INT["C"]
 
 
 def test_find_landmark_falls_through_when_first_absent():

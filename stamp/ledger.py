@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Optional
+from typing import Iterable, Optional
 
 
 class Ledger:
@@ -30,23 +30,45 @@ class Ledger:
         signature: bytes,
         timestamp: int,
         seq_hash: bytes,
+        landmark_hits: Optional[Iterable] = None,
+        sequence_length: Optional[int] = None,
     ) -> None:
-        self._entries[self._key(synthesizer_id, run_counter)] = {
+        """Post an attestation. `landmark_hits` is an optional iterable of
+        objects with `slot/site/position/upstream/feature` attributes (e.g.
+        landmarks.LandmarkHit); they are serialized as plain dicts so the
+        ledger stays free of any landmarks dependency. `sequence_length`
+        records the construct length at synthesis time (pre-barcode-insert).
+        """
+        entry: dict = {
             "signature": signature.hex(),
             "timestamp": timestamp,
             "seq_hash": seq_hash.hex(),
         }
+        if landmark_hits is not None:
+            entry["landmark_hits"] = [
+                {"slot": h.slot, "site": h.site, "position": h.position,
+                 "upstream": h.upstream, "feature": h.feature}
+                for h in landmark_hits
+            ]
+        if sequence_length is not None:
+            entry["sequence_length"] = sequence_length
+        self._entries[self._key(synthesizer_id, run_counter)] = entry
         self._flush()
 
     def lookup(self, synthesizer_id: int, run_counter: int) -> Optional[dict]:
         entry = self._entries.get(self._key(synthesizer_id, run_counter))
         if entry is None:
             return None
-        return {
+        out = {
             "signature": bytes.fromhex(entry["signature"]),
             "timestamp": entry["timestamp"],
             "seq_hash": bytes.fromhex(entry["seq_hash"]),
         }
+        if "landmark_hits" in entry:
+            out["landmark_hits"] = entry["landmark_hits"]
+        if "sequence_length" in entry:
+            out["sequence_length"] = entry["sequence_length"]
+        return out
 
     def _flush(self) -> None:
         if self.path is not None:

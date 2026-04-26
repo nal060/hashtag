@@ -8,12 +8,13 @@ modification tells investigators what kind of modification occurred.
 
 Algorithm summary:
 - Generate 10 priority lists of canonical 6-mers (one list per landmark slot).
-- Each list is bubble-sorted with a unique top-priority restriction enzyme
-  recognition site.
+- Slots 0-3 are bubble-sorted with one anchored restriction enzyme site each
+  (EcoRI / BamHI / HindIII / XhoI). Slots 4-9 keep the natural round-robin
+  order, so the 10 landmarks don't all collapse to a multiple-cloning-site
+  cluster on plasmids that happen to carry one.
 - For each landmark, scan the construct for the highest-priority site that
   is present; tiebreak alphabetically by downstream sequence.
-- Read the 2 upstream bases of the chosen site; the first of those 2 bases
-  (2 bits) is the landmark feature.
+- The base immediately 5' of the chosen site (2 bits) is the landmark feature.
 """
 
 from __future__ import annotations
@@ -22,25 +23,19 @@ from dataclasses import dataclass
 from itertools import product
 from typing import Optional
 
-from Bio.Restriction import AllEnzymes
 from Bio.Seq import Seq
 
 
 N_LANDMARKS = 10
 
-# Top-priority sites pinned to the front of each pile, one per landmark slot.
-# Standard NEB-stocked Type II enzymes, well-known recognition sequences.
+# Sites anchored at the front of slots 0..len(DEFAULT_PRIORITY_SITES)-1.
+# Slots beyond this length use the natural round-robin order so all 10
+# landmarks don't collapse to a single MCS cluster.
 DEFAULT_PRIORITY_SITES: tuple[str, ...] = (
-    "GAATTC",  # EcoRI
-    "GGATCC",  # BamHI
-    "AAGCTT",  # HindIII
-    "CCATGG",  # NcoI
-    "CTCGAG",  # XhoI
-    "GTCGAC",  # SalI
-    "GGTACC",  # KpnI
-    "GAGCTC",  # SacI
-    "ACGCGT",  # MluI
-    "ATCGAT",  # ClaI
+    "GAATTC",  # EcoRI  → slot 0
+    "GGATCC",  # BamHI  → slot 1
+    "AAGCTT",  # HindIII → slot 2
+    "CTCGAG",  # XhoI   → slot 3
 )
 
 _BASE_TO_INT = {"A": 0, "C": 1, "G": 2, "T": 3}
@@ -59,27 +54,19 @@ def _all_canonical_6mers() -> list[str]:
     return sorted(seen)
 
 
-def _restriction_6mer_sites() -> set[str]:
-    """All canonical 6-mer recognition sites known to BioPython's enzyme list."""
-    out: set[str] = set()
-    for enzyme in AllEnzymes:
-        site = enzyme.site.upper()
-        if len(site) == 6 and all(b in "ACGT" for b in site):
-            out.add(_canonical(site))
-    return out
-
-
 def generate_priority_lists(
     n_landmarks: int = N_LANDMARKS,
     pinned_sites: tuple[str, ...] = DEFAULT_PRIORITY_SITES,
 ) -> list[list[str]]:
     """Build the per-landmark canonical-6-mer search-priority lists.
 
-    Each pile gets the corresponding pinned site at index 0, then the
-    remaining canonical 6-mers (excluding all pinned sites) are distributed
-    round-robin across the piles. This guarantees pinned sites are searched
-    first regardless of where they would have fallen in a pure modulo
-    partition, and that no 6-mer appears in more than one pile.
+    The first `len(pinned_sites)` slots are anchored: slot `i` has
+    `pinned_sites[i]` (canonicalized) at index 0 of its pile. Remaining
+    slots get no pin — their pile starts with whatever round-robin
+    distribution puts there, which spreads non-pinned slots away from any
+    single MCS cluster. The remaining canonical 6-mers (minus the pinned
+    set) are distributed round-robin across all piles after pinning, so no
+    6-mer appears in more than one pile.
     """
     all_mers = _all_canonical_6mers()
     canonical_pinned = [_canonical(s) for s in pinned_sites[:n_landmarks]]
@@ -102,8 +89,8 @@ class LandmarkHit:
     slot: int
     site: Optional[str]       # canonical 6-mer matched, or None if all priorities exhausted
     position: Optional[int]   # position in the sequence
-    upstream: Optional[str]   # 2 bases immediately upstream of `position`
-    feature: Optional[int]    # 2-bit value derived from upstream[0] (the stored landmark)
+    upstream: Optional[str]   # the base immediately 5' of `position`
+    feature: Optional[int]    # 2-bit value of `upstream` (the stored landmark)
 
 
 def _find_all_occurrences(sequence: str, site: str) -> list[int]:
@@ -129,12 +116,12 @@ def find_landmark(sequence: str, priority_list: list[str], slot: int) -> Landmar
       2. For each candidate site, find all occurrences (forward + reverse complement).
       3. If any occurrences: pick one. Multiple hits → tiebreak alphabetically
          by the 10 bases immediately downstream of the site.
-      4. Read 2 bases immediately upstream of the chosen position.
-      5. Return the first of those 2 bases (2 bits) as the feature.
+      4. Take the base immediately 5' of the chosen position (2 bits) as the
+         landmark feature.
 
-    If the chosen position is too close to the 5' end (< 2 bases upstream) we
-    advance to the next candidate. If the entire priority list is exhausted,
-    returns a LandmarkHit with site=None and feature=None.
+    If the chosen position is at the 5' end (no upstream base) we advance to
+    the next candidate. If the entire priority list is exhausted, returns a
+    LandmarkHit with site=None and feature=None.
     """
     seq_upper = sequence.upper()
     for site in priority_list:
@@ -148,18 +135,17 @@ def find_landmark(sequence: str, priority_list: list[str], slot: int) -> Landmar
                 positions,
                 key=lambda p: seq_upper[p + 6:p + 16] if p + 16 <= len(seq_upper) else seq_upper[p + 6:],
             )
-        if chosen < 2:
-            # too close to the 5' end to read 2 upstream bases
-            continue
-        upstream = seq_upper[chosen - 2:chosen]
-        if upstream[0] not in _BASE_TO_INT:
-            continue  # upstream contains N or another non-canonical character
+        if chosen < 1:
+            continue  # no upstream base available
+        upstream = seq_upper[chosen - 1]
+        if upstream not in _BASE_TO_INT:
+            continue  # upstream is N or another non-canonical character
         return LandmarkHit(
             slot=slot,
             site=site,
             position=chosen,
             upstream=upstream,
-            feature=_BASE_TO_INT[upstream[0]],
+            feature=_BASE_TO_INT[upstream],
         )
     return LandmarkHit(slot=slot, site=None, position=None, upstream=None, feature=None)
 
