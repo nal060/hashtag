@@ -57,15 +57,19 @@ def test_bits_to_dna_rejects_odd_length():
 # ---------- molecular constraints ----------
 
 def test_constraints_reject_forbidden_site():
-    dna = "AAAA" + "GAATTC" + "CCCC" * 5
+    # GCGGCCGC (NotI) is one of many CommOnly sites in the blacklist; its
+    # presence guarantees rejection. The exact reported substring depends on
+    # blacklist iteration order, so we only assert the rejection class.
+    dna = "ACGTACGT" + "GCGGCCGC" + "ACGTACGT" * 3
     ok, reason = encoder.check_molecular_constraints(dna)
     assert not ok
-    assert "GAATTC" in reason
+    assert "forbidden site" in reason
 
 
 def test_constraints_reject_homopolymer():
-    dna = "AAAAA" + "CCGGTACGTA" * 3
-    ok, reason = encoder.check_molecular_constraints(dna)
+    # Hand-picked filler with balanced GC and no 6+bp CommOnly site, ending
+    # in 5x A so the first failure surfaced is the homopolymer.
+    ok, reason = encoder.check_molecular_constraints("GCGAAGTAGTGCAAAAA")
     assert not ok
     assert "homopolymer" in reason
 

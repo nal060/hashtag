@@ -18,6 +18,7 @@ import random
 from dataclasses import dataclass
 from typing import Iterable
 
+from Bio.Restriction import CommOnly
 from Bio.Seq import Seq
 
 from . import bits as bitsmod
@@ -70,24 +71,17 @@ DICT_UNPROTECTED_DATA_BITS = sum(w for _, w in DICT_UNPROTECTED_FIELD_ORDER)  # 
 
 # ---------- molecular constraints ----------
 
-FORBIDDEN_SITES: list[str] = [
-    "GAATTC",  # EcoRI
-    "GGATCC",  # BamHI
-    "AAGCTT",  # HindIII
-    "CCATGG",  # NcoI
-    "CTCGAG",  # XhoI
-    "GTCGAC",  # SalI
-    "GGTACC",  # KpnI
-    "GAGCTC",  # SacI
-    "ACGCGT",  # MluI
-    "ATCGAT",  # ClaI
-    "TCTAGA",  # XbaI
-    "ACTAGT",  # SpeI
-    "GCTAGC",  # NheI
-    "CCCGGG",  # SmaI / XmaI
-    "GATATC",  # EcoRV
-    "GCGGCCGC",  # NotI (8-mer, included for completeness)
-]
+# Source of forbidden recognition sites. Override this with any iterable of
+# BioPython enzymes (e.g. AllEnzymes, or a custom RestrictionBatch). Sites
+# are filtered to strict-consensus ACGT (no IUPAC ambiguity) and length
+# >= _MIN_SITE_LEN to keep the blacklist tractable for the increment search.
+_FORBIDDEN_ENZYMES = CommOnly
+_MIN_SITE_LEN = 7
+
+FORBIDDEN_SITES: list[str] = sorted({
+    e.site.upper() for e in _FORBIDDEN_ENZYMES
+    if len(e.site) >= _MIN_SITE_LEN and set(e.site.upper()) <= set("ACGT")
+})
 
 
 def check_molecular_constraints(dna: str) -> tuple[bool, str]:
