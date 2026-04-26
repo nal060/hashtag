@@ -8,8 +8,10 @@ modification tells investigators what kind of modification occurred.
 
 Algorithm summary:
 - Generate 10 priority lists of canonical 6-mers (one list per landmark slot).
-- Each list is bubble-sorted with a unique top-priority restriction enzyme
-  recognition site.
+- Slots 0-3 are bubble-sorted with one anchored restriction enzyme site each
+  (EcoRI / BamHI / HindIII / XhoI). Slots 4-9 keep the natural round-robin
+  order, so the 10 landmarks don't all collapse to a multiple-cloning-site
+  cluster on plasmids that happen to carry one.
 - For each landmark, scan the construct for the highest-priority site that
   is present; tiebreak alphabetically by downstream sequence.
 - Read the 2 upstream bases of the chosen site; the first of those 2 bases
@@ -22,25 +24,19 @@ from dataclasses import dataclass
 from itertools import product
 from typing import Optional
 
-from Bio.Restriction import AllEnzymes
 from Bio.Seq import Seq
 
 
 N_LANDMARKS = 10
 
-# Top-priority sites pinned to the front of each pile, one per landmark slot.
-# Standard NEB-stocked Type II enzymes, well-known recognition sequences.
+# Sites anchored at the front of slots 0..len(DEFAULT_PRIORITY_SITES)-1.
+# Slots beyond this length use the natural round-robin order so all 10
+# landmarks don't collapse to a single MCS cluster.
 DEFAULT_PRIORITY_SITES: tuple[str, ...] = (
-    "GAATTC",  # EcoRI
-    "GGATCC",  # BamHI
-    "AAGCTT",  # HindIII
-    "CCATGG",  # NcoI
-    "CTCGAG",  # XhoI
-    "GTCGAC",  # SalI
-    "GGTACC",  # KpnI
-    "GAGCTC",  # SacI
-    "ACGCGT",  # MluI
-    "ATCGAT",  # ClaI
+    "GAATTC",  # EcoRI  → slot 0
+    "GGATCC",  # BamHI  → slot 1
+    "AAGCTT",  # HindIII → slot 2
+    "CTCGAG",  # XhoI   → slot 3
 )
 
 _BASE_TO_INT = {"A": 0, "C": 1, "G": 2, "T": 3}
@@ -59,27 +55,19 @@ def _all_canonical_6mers() -> list[str]:
     return sorted(seen)
 
 
-def _restriction_6mer_sites() -> set[str]:
-    """All canonical 6-mer recognition sites known to BioPython's enzyme list."""
-    out: set[str] = set()
-    for enzyme in AllEnzymes:
-        site = enzyme.site.upper()
-        if len(site) == 6 and all(b in "ACGT" for b in site):
-            out.add(_canonical(site))
-    return out
-
-
 def generate_priority_lists(
     n_landmarks: int = N_LANDMARKS,
     pinned_sites: tuple[str, ...] = DEFAULT_PRIORITY_SITES,
 ) -> list[list[str]]:
     """Build the per-landmark canonical-6-mer search-priority lists.
 
-    Each pile gets the corresponding pinned site at index 0, then the
-    remaining canonical 6-mers (excluding all pinned sites) are distributed
-    round-robin across the piles. This guarantees pinned sites are searched
-    first regardless of where they would have fallen in a pure modulo
-    partition, and that no 6-mer appears in more than one pile.
+    The first `len(pinned_sites)` slots are anchored: slot `i` has
+    `pinned_sites[i]` (canonicalized) at index 0 of its pile. Remaining
+    slots get no pin — their pile starts with whatever round-robin
+    distribution puts there, which spreads non-pinned slots away from any
+    single MCS cluster. The remaining canonical 6-mers (minus the pinned
+    set) are distributed round-robin across all piles after pinning, so no
+    6-mer appears in more than one pile.
     """
     all_mers = _all_canonical_6mers()
     canonical_pinned = [_canonical(s) for s in pinned_sites[:n_landmarks]]
