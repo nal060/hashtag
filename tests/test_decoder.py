@@ -140,6 +140,45 @@ def test_scenario3_transplant_flags_length_and_landmarks(primers, layout, fresh_
     assert not result.sequence_length_match  # length disagreement
 
 
+def test_scenario3_transplant_uses_ledger_landmark_hits_for_site_forensics(
+    primers, layout, fresh_ledger,
+):
+    """Same transplant attack, but verify is called WITHOUT
+    `encoded_landmark_hits` — the realistic deployment path. The verifier
+    pulls the encoder-side hits from the ledger entry that was posted at
+    stamp time, so site_matches_stored is populated and we get site-level
+    forensics rather than the 2-bit-feature-only fallback."""
+    fwd, rev = primers
+    stamped = decoder.stamp(
+        sequence=GFP_LIKE,
+        synthesizer_id=33,
+        run_counter=0,
+        machine_state="idle",
+        firmware_version="v1.0",
+        primer_fwd=fwd,
+        primer_rev=rev,
+        ledger=fresh_ledger,
+    )
+    result = decoder.verify(
+        barcode_dna=stamped.barcode,
+        suspect_sequence=MCHERRY_LIKE,
+        layout=layout,
+        ledger=fresh_ledger,
+        # NOTE: no encoded_landmark_hits — must come from the ledger
+    )
+    assert result.signature_valid
+    assert not result.sequence_match
+    # site-level comparison was actually performed: at least one slot anchored
+    # to a different site in the suspect sequence than at encode time, AND we
+    # can tell because site_matches_stored is False (not None / unevaluated).
+    site_decisions = [lv.site_matches_stored for lv in result.landmarks]
+    assert any(d is False for d in site_decisions), (
+        "expected at least one slot where the stored site differs from the "
+        "suspect-sequence site (transplant signature); got "
+        f"{site_decisions}"
+    )
+
+
 # ---------- scenario 4: barcode absent ----------
 
 def test_scenario4_no_ledger_entry_flags_absence(primers, layout, fresh_ledger):

@@ -174,7 +174,19 @@ def verify(
     ledger_entry = ledger.lookup(synthesizer_id, run_counter)
     ledger_hit = ledger_entry is not None
 
-    # 9. landmark forensic comparison
+    # 9. landmark forensic comparison. If the caller didn't pass
+    # `encoded_landmark_hits`, try to pull them from the ledger entry —
+    # this is the realistic deployment path where a verifier has only
+    # public-ledger access. Older entries without `landmark_hits` fall
+    # through to the 2-bit-feature-only comparison.
+    if encoded_landmark_hits is None and ledger_entry and "landmark_hits" in ledger_entry:
+        encoded_landmark_hits = [
+            lm_mod.LandmarkHit(
+                slot=h["slot"], site=h["site"], position=h["position"],
+                upstream=h["upstream"], feature=h["feature"],
+            )
+            for h in ledger_entry["landmark_hits"]
+        ]
     cmps = lm_mod.compare_landmarks(
         stored_features=stored_features,
         sequence=suspect_sequence,
@@ -263,5 +275,6 @@ def stamp(
         signature=enc.full_signature,
         timestamp=timestamp,
         seq_hash=enc.fields.seq_hash,
+        landmark_hits=hits,
     )
     return StampResult(barcode=barcode, encoding=enc, landmark_hits=hits)
