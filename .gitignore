@@ -37,3 +37,6 @@ data/scratch/
 examples/*_stamped.gb
 examples/*_stamped.png
 examples/*.gb1
+
+# Experiment outputs
+results/
