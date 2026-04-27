@@ -367,7 +367,8 @@ def decode_landmarks(dna: str, dictionary: dict[int, str], seed: bytes) -> list[
 # ---------- sequence hash ----------
 
 def compute_sequence_hash(sequence: str, seed: bytes, sample_every: int = 50) -> bytes:
-    """Sparse-sampled SHA-256 of the sequence, truncated to 16 bits.
+    """Sparse-sampled SHA-256 of the sequence, truncated to `SEQ_HASH_BITS`
+    bits (24 bits per the current schema).
 
     Detects large rearrangements/transplants. By design misses point mutations.
     """
